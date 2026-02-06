@@ -4,15 +4,41 @@
 
 Sistema de seguridad para monitoreo y protección de interfaces de línea de comandos con capacidades de IA.
 
+## ¿Por qué necesito AI-CLI-Sentinel?
+
+Si usas herramientas de inteligencia artificial en tu terminal (como **Gemini**, **Claude**, o **Codex**), necesitas mantenerlas actualizadas para obtener las últimas mejoras. Sin embargo, actualizar software desde internet puede ser riesgoso. **AI-CLI-Sentinel** es tu "cinturón de seguridad": automatiza la actualización de tus agentes favoritos asegurándose de que, si algo sale mal o el paquete contiene errores, tu computadora y tus llaves de acceso (API Keys) estén protegidas.
+
+### ✅ Checklist de Confianza
+
+**¿Qué hace este script por mí?**
+
+* ✅ **No toca tus archivos personales:** Solo respalda configuraciones de IA.
+* ✅ **Es reversible:** Crea un punto de restauración para que puedas "volver atrás".
+* ✅ **Es silencioso:** Hace el trabajo pesado en segundos sin pedirte configuraciones complejas.
+* ✅ **Solo actualiza lo que tú apruebas:** Trabaja con una lista blanca estricta de agentes confiables.
+* ✅ **Protege tus secretos:** Respalda automáticamente tus llaves de acceso antes de cualquier cambio.
+
+## 🤖 Agentes Soportados
+
+AI-CLI-Sentinel gestiona de forma segura los siguientes agentes de IA:
+
+| Agente | Desarrollador | Propósito |
+| --- | --- | --- |
+| **Gemini CLI** | Google | Asistente multimodal y generación de código. |
+| **Claude Code** | Anthropic | Programación en pareja (Pair programming) avanzada. |
+| **Codex CLI** | OpenAI | Generación de comandos y lógica de programación. |
+| **Qwen Code** | Alibaba | Modelos de lenguaje especializados en código. |
+
+> **Nota:** Puedes agregar más agentes editando el archivo `src/agents.allowlist.json`. Solo se actualizarán los agentes que estén explícitamente en tu lista blanca.
+
 ## 🚀 Características
 
-- **Gestión de seguridad** para la cadena de suministro de IA
-- **Lista blanca estricta** de agentes permitidos (NPM y Winget)
-- **Modo descubrimiento** para auditoría de agentes instalados
-- **Puntos de restauración VSS** antes de actualizaciones
-- **Respaldo automático** de secretos (.ssh, .config, .npmrc)
-- **Mitigaciones de seguridad** con `--ignore-scripts` para prevenir malware
-- **Logging completo** para auditoría y análisis
+- **Seguridad primero:** Solo actualiza agentes que tú explícitamente apruebas en tu lista blanca
+- **Protección automática:** Crea puntos de restauración antes de cualquier cambio
+- **Respaldo de secretos:** Guarda automáticamente tus llaves de acceso antes de actualizar
+- **Modo descubrimiento:** Encuentra agentes instalados que no están en tu lista blanca (sin hacer cambios)
+- **Prevención de malware:** Usa técnicas avanzadas para evitar la ejecución de código malicioso durante instalaciones
+- **Registro completo:** Mantiene un log detallado de todas las operaciones para tu revisión
 
 ## 📋 Requisitos
 
@@ -79,6 +105,58 @@ Buscar agentes de IA instalados que NO están en la lista blanca:
 ```
 
 Este modo **NO realiza cambios**, solo reporta candidatos detectados.
+
+## 📘 Guía Rápida para Usuarios No Técnicos
+
+### ¿Qué hace AI-CLI-Sentinel?
+
+Imagina que tienes varios asistentes de IA instalados en tu computadora (como Gemini, Claude, Codex). Cada cierto tiempo, estos asistentes reciben actualizaciones con nuevas funciones y correcciones de errores. AI-CLI-Sentinel es como un asistente personal que:
+
+1. **Verifica qué asistentes tienes instalados** (modo Discover)
+2. **Actualiza solo los que tú apruebas** (lista blanca)
+3. **Crea una copia de seguridad** antes de hacer cambios (punto de restauración)
+4. **Protege tus llaves de acceso** (respaldo de secretos)
+
+### Línea de Tiempo del Proceso
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Inicio: Verificas que tienes permisos de administrador  │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. Preparación: Se crea un punto de restauración del sistema│
+│    (por si necesitas "volver atrás")                        │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. Respaldo: Se guardan tus llaves de acceso (.ssh, .config)│
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 4. Actualización: Se actualizan solo los agentes aprobados  │
+│    en tu lista blanca                                       │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 5. Finalización: Todo listo. Tus agentes están actualizados  │
+│    y protegidos                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Modo Simulación (Recomendado para Primera Vez)
+
+Antes de ejecutar el script por primera vez, usa el modo simulación para ver qué haría sin hacer cambios reales:
+
+```powershell
+.\src\AI-CLI-Sentinel.ps1 -WhatIf
+```
+
+Verás mensajes como:
+- `What if: Performing the operation 'Crear Punto de Restauración (VSS)'...`
+- `What if: Performing the operation 'Actualizar NPM'...`
+
+Esto te permite entender exactamente qué hará el script antes de ejecutarlo realmente.
 
 ### Personalizar Archivo de Configuración
 
@@ -161,6 +239,30 @@ Invoke-Pester tests/
 ## 🔒 Seguridad
 
 Para reportar vulnerabilidades de seguridad, por favor usa el [formulario de seguridad](.github/ISSUE_TEMPLATE/security_report.md) o consulta [SECURITY.md](SECURITY.md).
+
+### Referencias de Seguridad
+
+Este proyecto implementa prácticas de seguridad basadas en estándares reconocidos:
+
+1. **OWASP Top 10 para LLM (2024-2025)**
+   - Mitiga riesgos de "Insecure Output Handling" mediante validación estricta de entrada.
+   - Previene ataques de inyección indirecta mediante lista blanca de agentes.
+   - Referencia: [OWASP LLM Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+
+2. **Node.js Security Best Practices**
+   - Utiliza `--ignore-scripts` para prevenir la ejecución de malware durante la instalación de paquetes npm.
+   - Referencia: [npm Security Best Practices](https://docs.npmjs.com/cli/v9/using-npm/scripts#security)
+
+3. **Microsoft Volume Shadow Copy Service (VSS)**
+   - Implementa puntos de restauración del sistema antes de realizar cambios críticos.
+   - Referencia: [Windows System Restore](https://learn.microsoft.com/en-us/windows/win32/vss/volume-shadow-copy-service-overview)
+
+4. **Repositorios Oficiales**
+   - Solo interactúa con repositorios oficiales y verificados:
+     - [npm Registry](https://www.npmjs.com/) - Para paquetes Node.js
+     - [Microsoft Winget](https://github.com/microsoft/winget-cli) - Para aplicaciones Windows
+     - [OpenAI Codex](https://developers.openai.com/codex/) - Documentación oficial de Codex CLI
+     - [Qwen Code](https://github.com/QwenLM/qwen-code) - Repositorio oficial de Qwen Code
 
 ## 🤝 Contribuir
 
