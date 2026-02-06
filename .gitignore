@@ -1,0 +1,45 @@
+# Logs
+logs/
+*.log
+AI_Sentinel_Log.txt
+
+# Backup files
+backup/
+*.bak
+*.backup
+AI_Backup_*/
+
+# PowerShell
+*.ps1xml
+*.psm1
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
+# User-specific files
+*.user
+*.suo
+
+# Build artifacts
+bin/
+obj/
+dist/

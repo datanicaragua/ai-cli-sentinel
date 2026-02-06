@@ -1,0 +1,12 @@
+{
+  "comment": "Lista blanca oficial de agentes. Solo estos paquetes serán actualizados automáticamente.",
+  "npm": [
+    "@google/gemini-cli",
+    "@anthropic-ai/claude-code",
+    "@openai/codex",
+    "@qwen-code/qwen-code"
+  ],
+  "winget": [
+    "GitHub.cli"
+  ]
+}
