@@ -48,8 +48,8 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content src\AI-CLI-Sentinel.ps1 -Raw), [ref]$errors)
    $errors.Count  # Debe ser 0
    
-   # Ejecutar tests
-   Invoke-Pester tests/
+   # Ejecutar tests (runner robusto, compatible con Pester 3/5)
+   .\scripts\run-tests.ps1 -InstallPester5
    ```
 
 ## Cómo Contribuir
@@ -93,7 +93,7 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
 3. **Ejecutar tests localmente**
    ```powershell
    # Tests unitarios
-   Invoke-Pester tests/ -Output Detailed
+   .\scripts\run-tests.ps1 -InstallPester5 -FailOnError
    
    # Validación de sintaxis
    Invoke-ScriptAnalyzer -Path src/ -Recurse -Severity Warning,Error
