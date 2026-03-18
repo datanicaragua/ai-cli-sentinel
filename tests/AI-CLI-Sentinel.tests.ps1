@@ -75,6 +75,19 @@ Describe "AI-CLI-Sentinel Tests" {
         It "Debe usar --ignore-scripts en instalaciones NPM" {
             $ScriptContent | Should -Match "--ignore-scripts"
         }
+
+        It "No debe escribir el archivo de log durante -WhatIf" {
+            $ScriptContent | Should -Match 'if \(\$WhatIfPreference\)'
+        }
+
+        It "No debe usar --save-exact en instalación NPM global" {
+            $ScriptContent | Should -Not -Match '--save-exact'
+        }
+
+        It "Debe usar comparación robusta para 0x80070005" {
+            $ScriptContent | Should -Match '-imatch\s+''0x80070005'''
+            $ScriptContent | Should -Match '\[System\.Environment\]::NewLine'
+        }
     }
     
     Context "Validación de Sintaxis PowerShell" {

@@ -89,6 +89,10 @@ Actualiza solo los agentes en la lista blanca con respaldo de secretos:
 .\src\AI-CLI-Sentinel.ps1 -BackupSecrets
 ```
 
+Comportamiento de salida:
+- Devuelve `0` cuando todas las operaciones completan sin fallos.
+- Devuelve `1` si una o más actualizaciones fallan (útil para automatización/CI).
+
 ### Modo Simulación (WhatIf)
 
 Ver qué haría el script sin realizar cambios:
@@ -122,6 +126,13 @@ Modo no interactivo (aprobación de todos los pendientes):
 ```
 
 Este modo **solo actualiza la allowlist**. Luego ejecuta el flujo estándar para actualizar paquetes.
+
+### ¿Qué comando debo usar?
+
+- Si quieres ver qué haría el script sin tocar nada: `./src/AI-CLI-Sentinel.ps1 -WhatIf`
+- Si quieres detectar CLIs instalados fuera de tu allowlist: `./src/AI-CLI-Sentinel.ps1 -Discover`
+- Si quieres revisar y aprobar candidatos detectados: `./src/AI-CLI-Sentinel.ps1 -ApproveCandidates`
+- Si quieres ejecutar la actualización real con respaldo de secretos: `./src/AI-CLI-Sentinel.ps1 -BackupSecrets`
 
 ## 📘 Guía Rápida para Usuarios No Técnicos
 
@@ -243,15 +254,25 @@ flowchart TD
 
 ## 🧪 Testing
 
-Ejecutar tests con Pester:
+Ejecutar tests desde terminal (runner robusto):
 
 ```powershell
-# Instalar Pester si es necesario
-Install-Module -Name Pester -Force -SkipPublisherCheck
-
-# Ejecutar tests
-Invoke-Pester tests/
+# Ejecutar tests (instala/usa Pester compatible automáticamente)
+.\scripts\run-tests.ps1 -InstallPester5 -FailOnError
 ```
+
+¿Cuándo correr tests?
+- Antes de abrir un Pull Request.
+- Después de cambios en `src/AI-CLI-Sentinel.ps1`.
+- Después de cambios en configuración o flujo de actualización (`src/agents.allowlist.json`, control de errores, logging).
+- Después de atender comentarios de revisión o refactors en el script.
+
+¿Para qué sirven estos tests?
+- Verifican que el script principal exista y mantenga parámetros esperados como `-Discover`, `-BackupSecrets` y `-ConfigFile`.
+- Validan que la configuración JSON tenga estructura correcta.
+- Detectan regresiones básicas en sintaxis PowerShell y en decisiones de seguridad ya implementadas.
+
+Si solo vas a usar la herramienta y no estás modificando código, normalmente **no necesitas ejecutar estos tests**. Están orientados sobre todo a desarrollo, mantenimiento y validación antes de publicar cambios.
 
 ## 🔒 Seguridad
 

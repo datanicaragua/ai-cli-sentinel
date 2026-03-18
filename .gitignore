@@ -8,6 +8,7 @@ backup/
 *.bak
 *.backup
 AI_Backup_*/
+src/agents.candidates.json
 
 # PowerShell
 *.ps1xml

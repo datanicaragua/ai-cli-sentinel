@@ -102,6 +102,11 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    Get-Content src\agents.allowlist.json | ConvertFrom-Json | Out-Null
    ```
 
+   **Cuándo ejecutar tests en terminal:**
+   - Antes de crear o actualizar tu Pull Request.
+   - Después de modificar `src/AI-CLI-Sentinel.ps1`.
+   - Después de cambios en reglas de seguridad, salida/errores o documentación técnica asociada.
+
 4. **Probar el script (modo seguro)**
    ```powershell
    # Modo simulación (WhatIf)

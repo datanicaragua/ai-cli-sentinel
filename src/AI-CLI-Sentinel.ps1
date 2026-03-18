@@ -56,6 +56,12 @@ function Write-Log {
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Line = "[$TimeStamp] [$Level] $Message"
     Write-Host $Line -ForegroundColor $Color
+
+    # En -WhatIf evitamos efectos laterales y ruido de ShouldProcess del propio log.
+    if ($WhatIfPreference) {
+        return
+    }
+
     $Line | Out-File -FilePath $LogPath -Append -Encoding UTF8
 }
 
@@ -94,6 +100,22 @@ function Test-NpmPackageName {
 
     # Validacion conservadora para scoped/unscoped packages.
     return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
+}
+
+function Write-CommandOutput {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Prefix,
+        [Parameter(Mandatory=$true)]
+        [object[]]$Lines
+    )
+
+    foreach ($line in $Lines) {
+        $text = "$line".TrimEnd()
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if ($text -match '^\s*[-\\|/]\s*$') { continue }
+        Write-Log "$Prefix$text" -Color Gray
+    }
 }
 
 # --- INICIO DEL PROCESO ---
@@ -283,6 +305,10 @@ if ($Config.npm.Count -eq 0 -and $Config.winget.Count -eq 0) {
     exit 0
 }
 
+$FailedOperations = @()
+$UpdatedOperations = @()
+$SkippedOperations = @()
+
 # NPM
 if ($Config.npm.Count -gt 0) {
     Write-Log "Procesando $($Config.npm.Count) agente(s) NPM..." -Color Cyan
@@ -293,23 +319,33 @@ if ($Config.npm.Count -gt 0) {
             if ($CheckJson) {
                 $Check = $CheckJson | ConvertFrom-Json
                 if ($Check.dependencies.$AgentName) {
-                    if ($PSCmdlet.ShouldProcess($AgentName, "Actualizar NPM (Aislado + Audit)")) {
+                    if ($PSCmdlet.ShouldProcess($AgentName, "Actualizar NPM (Aislado)")) {
                         Write-Log "Actualizando $AgentName..." -Color Cyan
                         # --ignore-scripts: BLOQUEO DE MALWARE
-                        # --save-exact: EVITAR DRIFT DE VERSIONES
-                        npm install -g "$AgentName@latest" --ignore-scripts --audit --save-exact 2>&1 | ForEach-Object {
-                            Write-Log "NPM: $_" -Color Gray
+                        $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
+                        $npmExitCode = $LASTEXITCODE
+                        Write-CommandOutput -Prefix "NPM: " -Lines $npmOutput
+
+                        if ($npmExitCode -ne 0) {
+                            $FailedOperations += "NPM:$AgentName (exit=$npmExitCode)"
+                            Write-Log "Fallo al actualizar $AgentName (exit=$npmExitCode)." -Color Red -Level ERROR
+                            continue
                         }
+
+                        $UpdatedOperations += "NPM:$AgentName"
                     }
                 } else {
                     Write-Log "Saltando $AgentName (No instalado)" -Color Gray
+                    $SkippedOperations += "NPM:$AgentName"
                 }
             } else {
                 Write-Log "Saltando $AgentName (No se pudo verificar instalación)" -Color Yellow -Level WARN
+                $SkippedOperations += "NPM:$AgentName"
             }
         } catch {
             # FIX: Usamos $($AgentName) para evitar error de parseo
             Write-Log "Error procesando $($AgentName): $_" -Color Red -Level ERROR
+            $FailedOperations += "NPM:$AgentName (exception)"
         }
     }
 }
@@ -320,15 +356,38 @@ if ($Config.winget.Count -gt 0) {
     foreach ($AppId in $Config.winget) {
         if ($PSCmdlet.ShouldProcess($AppId, "Actualizar Winget")) {
             try {
-                winget upgrade --id $AppId --silent --accept-source-agreements 2>&1 | ForEach-Object {
-                    Write-Log "Winget: $_" -Color Gray
+                $wingetOutput = @(winget upgrade --id $AppId --silent --accept-source-agreements --accept-package-agreements 2>&1)
+                $wingetExitCode = $LASTEXITCODE
+                Write-CommandOutput -Prefix "Winget: " -Lines $wingetOutput
+
+                if ($wingetExitCode -ne 0) {
+                    $FailedOperations += "Winget:$AppId (exit=$wingetExitCode)"
+                    Write-Log "Fallo al actualizar $AppId (exit=$wingetExitCode)." -Color Red -Level ERROR
+
+                    if (($wingetOutput -join [System.Environment]::NewLine) -imatch '0x80070005') {
+                        Write-Log "Diagnóstico: Access denied (0x80070005). Verifica privilegios elevados y que la app no esté en uso." -Color Yellow -Level WARN
+                    }
+                    continue
                 }
+
+                $UpdatedOperations += "Winget:$AppId"
             } catch {
                 # FIX: Usamos $($AppId) para evitar error de parseo
                 Write-Log "Error actualizando $($AppId): $_" -Color Red -Level ERROR
+                $FailedOperations += "Winget:$AppId (exception)"
             }
         }
     }
+}
+
+Write-Log "Resumen: actualizados=$($UpdatedOperations.Count), omitidos=$($SkippedOperations.Count), fallidos=$($FailedOperations.Count)" -Color Cyan
+
+if ($FailedOperations.Count -gt 0) {
+    foreach ($failure in $FailedOperations) {
+        Write-Log "Fallo registrado: $failure" -Color Red -Level ERROR
+    }
+    Write-Log "Protocolo Sentinel finalizó con errores." -Color Red -Level ERROR
+    exit 1
 }
 
 Write-Log "Protocolo Sentinel finalizado correctamente." -Color Green
