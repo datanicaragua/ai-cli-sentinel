@@ -140,16 +140,10 @@ if ($Discover) {
                     # Si coincide con keyword Y NO está en la lista blanca
                     $name = Normalize-NpmName $pkg.Name
                     if (($name -match $Keywords) -and ($name -notin $Config.npm)) {
-                        $version = $null
-                        try {
-                            $depProp = $Installed.dependencies.PSObject.Properties | Where-Object { $_.Name -eq $pkg.Name } | Select-Object -First 1
-                            if ($depProp -and $depProp.Value) {
-                                $version = $depProp.Value.version
-                            }
-                        } catch {
-                            $version = "unknown"
+                        $version = "unknown"
+                        if ($pkg.Value -and $pkg.Value.version) {
+                            $version = $pkg.Value.version
                         }
-                        if (-not $version) { $version = "unknown" }
 
                         $Candidates.npm += [ordered]@{
                             name = $name
@@ -189,7 +183,7 @@ if ($ApproveCandidates) {
     if (-not (Test-Path $CandidatesFile)) {
         Write-Log "No se encontró archivo de candidatos: $CandidatesFile" -Color Yellow -Level WARN
         Write-Log "Primero ejecuta -Discover para generar candidatos." -Color Gray
-        exit 0
+        return
     }
 
     try {
