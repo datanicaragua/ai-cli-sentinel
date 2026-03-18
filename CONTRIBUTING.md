@@ -106,6 +106,7 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    - Antes de crear o actualizar tu Pull Request.
    - Después de modificar `src/AI-CLI-Sentinel.ps1`.
    - Después de cambios en reglas de seguridad, salida/errores o documentación técnica asociada.
+   - Después de cambios en detección de versiones, semántica del resumen o reporte JSON.
 
 4. **Probar el script (modo seguro)**
    ```powershell
@@ -114,7 +115,13 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    
    # Modo descubrimiento (solo reporte)
    .\src\AI-CLI-Sentinel.ps1 -Discover
+
+   # Flujo real con reporte estructurado
+   .\src\AI-CLI-Sentinel.ps1 -BackupSecrets -ReportPath "C:\Logs\sentinel-report.json"
    ```
+
+   Si el cambio toca lógica de actualización, valida también que el resumen final distinga correctamente entre `updated`, `would-update`, `already-current`, `not-installed`, `failed` y `unknown`.
+   Si el cambio toca el reporte estructurado, valida también el caso de error cuando `-ReportPath` no puede escribirse.
 
 5. **Commit con mensaje descriptivo**
    ```bash

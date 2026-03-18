@@ -25,6 +25,12 @@
 .PARAMETER BackupSecrets
     Realiza una copia de seguridad de .ssh y .config antes de operar.
 
+.PARAMETER ReportPath
+    Ruta al archivo JSON estructurado con el resultado de la ejecución.
+
+.PARAMETER NoReport
+    Deshabilita la escritura del reporte JSON.
+
 .EXAMPLE
     # Ejecución estándar (Modo seguro, solo lista blanca)
     .\AI-CLI-Sentinel.ps1 -BackupSecrets
@@ -45,19 +51,21 @@ param (
     [string]$LogPath = "$HOME\Desktop\AI_Sentinel_Log.txt",
     [string]$CandidatesFile = "$PSScriptRoot\agents.candidates.json",
     [switch]$ApproveCandidates,
-    [switch]$AutoApproveCandidates
+    [switch]$AutoApproveCandidates,
+    [string]$ReportPath = "$HOME\Desktop\AI_Sentinel_Report.json",
+    [switch]$NoReport
 )
 
 $ErrorActionPreference = "Stop"
+$RunStartedAt = Get-Date
 
-# --- FUNCIONES AUXILIARES ---
 function Write-Log {
     param([string]$Message, [string]$Color="White", [string]$Level="INFO")
+
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Line = "[$TimeStamp] [$Level] $Message"
     Write-Host $Line -ForegroundColor $Color
 
-    # En -WhatIf evitamos efectos laterales y ruido de ShouldProcess del propio log.
     if ($WhatIfPreference) {
         return
     }
@@ -81,25 +89,46 @@ function Save-JsonFile {
     $json | Set-Content -Path $Path -Encoding UTF8
 }
 
-function Initialize-Candidates {
+function New-CandidatesDocument {
     return [ordered]@{
         generatedAt = (Get-Date).ToString("o")
         npm = @()
     }
 }
 
-function Normalize-NpmName {
+function ConvertTo-NpmName {
     param([string]$Name)
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $null
+    }
+
     return $Name.Trim().ToLowerInvariant()
 }
 
 function Test-NpmPackageName {
     param([string]$Name)
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
 
-    # Validacion conservadora para scoped/unscoped packages.
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $false
+    }
+
     return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
+}
+
+function Get-MeaningfulCommandLines {
+    param([object[]]$Lines)
+
+    $meaningful = @()
+    foreach ($line in $Lines) {
+        $text = "$line".TrimEnd()
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if ($text -match '^\s*[-\\|/]\s*$') { continue }
+        if ($text -match '^\s*[-\s]{3,}$') { continue }
+        $meaningful += $text
+    }
+
+    return $meaningful
 }
 
 function Write-CommandOutput {
@@ -110,35 +139,322 @@ function Write-CommandOutput {
         [object[]]$Lines
     )
 
-    foreach ($line in $Lines) {
-        $text = "$line".TrimEnd()
-        if ([string]::IsNullOrWhiteSpace($text)) { continue }
-        if ($text -match '^\s*[-\\|/]\s*$') { continue }
+    foreach ($text in (Get-MeaningfulCommandLines -Lines $Lines)) {
         Write-Log "$Prefix$text" -Color Gray
     }
 }
 
-# --- INICIO DEL PROCESO ---
+function New-OperationResult {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [Parameter(Mandatory=$true)]
+        [string]$Manager,
+        [Parameter(Mandatory=$true)]
+        [string]$Status,
+        [string]$InstalledVersionBefore,
+        [string]$AvailableVersionBefore,
+        [string]$InstalledVersionAfter,
+        [bool]$Changed = $false,
+        [string[]]$Notes = @()
+    )
+
+    return [pscustomobject][ordered]@{
+        name = $Name
+        manager = $Manager
+        status = $Status
+        installedVersionBefore = $InstalledVersionBefore
+        availableVersionBefore = $AvailableVersionBefore
+        installedVersionAfter = $InstalledVersionAfter
+        changed = $Changed
+        timestamp = (Get-Date).ToString("o")
+        notes = @($Notes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+}
+
+function Format-VersionValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "n/a"
+    }
+
+    return $Value
+}
+
+function Get-OperationCounts {
+    param([object[]]$Results)
+
+    $counts = [ordered]@{
+        updated = 0
+        'would-update' = 0
+        'already-current' = 0
+        'not-installed' = 0
+        failed = 0
+        unknown = 0
+    }
+
+    foreach ($result in $Results) {
+        if ($counts.Contains($result.status)) {
+            $counts[$result.status]++
+        }
+    }
+
+    return $counts
+}
+
+function Write-OperationSummary {
+    param([object[]]$Results)
+
+    foreach ($result in $Results) {
+        $before = Format-VersionValue -Value $result.installedVersionBefore
+        if ($result.status -eq 'would-update') {
+            $after = Format-VersionValue -Value $result.availableVersionBefore
+        } else {
+            $after = Format-VersionValue -Value $result.installedVersionAfter
+        }
+
+        Write-Log ("Resultado | {0} | {1} | {2} -> {3} | {4}" -f $result.manager.ToUpperInvariant(), $result.name, $before, $after, $result.status) -Color Gray
+        foreach ($note in $result.notes) {
+            Write-Log ("Nota | {0} | {1}" -f $result.name, $note) -Color DarkGray
+        }
+    }
+
+    $counts = Get-OperationCounts -Results $Results
+    Write-Log ("Resumen: updated={0}, would-update={1}, already-current={2}, not-installed={3}, failed={4}, unknown={5}" -f $counts['updated'], $counts['would-update'], $counts['already-current'], $counts['not-installed'], $counts['failed'], $counts['unknown']) -Color Cyan
+    return $counts
+}
+
+function Write-RunReport {
+    param(
+        [Parameter(Mandatory=$true)]
+        [object[]]$Results,
+        [Parameter(Mandatory=$true)]
+        [datetime]$StartedAt,
+        [Parameter(Mandatory=$true)]
+        [datetime]$EndedAt,
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Counts,
+        [Parameter(Mandatory=$true)]
+        [int]$ExitCode
+    )
+
+    if ($NoReport) {
+        Write-Log "Reporte JSON omitido por -NoReport." -Color DarkGray
+        return $true
+    }
+
+    if ($WhatIfPreference) {
+        Write-Log "Reporte JSON omitido en -WhatIf para evitar efectos laterales." -Color DarkGray
+        return $true
+    }
+
+    $report = [ordered]@{
+        reportVersion = '1.0'
+        startedAt = $StartedAt.ToString('o')
+        endedAt = $EndedAt.ToString('o')
+        durationSeconds = [Math]::Round(($EndedAt - $StartedAt).TotalSeconds, 2)
+        exitCode = $ExitCode
+        whatIf = [bool]$WhatIfPreference
+        configFile = $ConfigFile
+        logPath = $LogPath
+        counts = $Counts
+        results = @($Results)
+    }
+
+    try {
+        Save-JsonFile -Object $report -Path $ReportPath
+        Write-Log "Reporte JSON escrito en: $ReportPath" -Color Green
+        return $true
+    } catch {
+        Write-Log "No se pudo escribir reporte JSON en $($ReportPath): $_" -Color Yellow -Level WARN
+        return $false
+    }
+}
+
+function Get-NpmInstalledPackageInfo {
+    param([string]$Name)
+
+    try {
+        $json = npm list -g $Name --depth=0 --json 2>$null
+        if (-not $json) {
+            return [pscustomobject]@{
+                querySucceeded = $false
+                installed = $false
+                installedVersion = $null
+                availableVersion = $null
+                notes = @('npm list no devolvió salida utilizable.')
+            }
+        }
+
+        $parsed = $json | ConvertFrom-Json
+        $packageProperty = $null
+        if ($parsed.dependencies) {
+            $packageProperty = $parsed.dependencies.PSObject.Properties[$Name]
+        }
+
+        if ($packageProperty) {
+            return [pscustomobject]@{
+                querySucceeded = $true
+                installed = $true
+                installedVersion = "$($packageProperty.Value.version)"
+                availableVersion = $null
+                notes = @()
+            }
+        }
+
+        return [pscustomobject]@{
+            querySucceeded = $true
+            installed = $false
+            installedVersion = $null
+            availableVersion = $null
+            notes = @()
+        }
+    } catch {
+        return [pscustomobject]@{
+            querySucceeded = $false
+            installed = $false
+            installedVersion = $null
+            availableVersion = $null
+            notes = @("No se pudo consultar npm list: $_")
+        }
+    }
+}
+
+function Get-NpmLatestVersion {
+    param([string]$Name)
+
+    try {
+        $output = @(npm view $Name version 2>&1)
+        $exitCode = $LASTEXITCODE
+        $lines = Get-MeaningfulCommandLines -Lines $output
+        $version = $lines | Select-Object -Last 1
+
+        if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            return [pscustomobject]@{
+                querySucceeded = $false
+                version = $null
+                notes = @('No se pudo consultar npm view para la versión más reciente.') + @($lines)
+            }
+        }
+
+        return [pscustomobject]@{
+            querySucceeded = $true
+            version = $version.Trim()
+            notes = @()
+        }
+    } catch {
+        return [pscustomobject]@{
+            querySucceeded = $false
+            version = $null
+            notes = @("No se pudo consultar npm view: $_")
+        }
+    }
+}
+
+function Get-WingetInstalledPackageInfo {
+    param([string]$Id)
+
+    try {
+        $output = @(winget list --id $Id --exact --accept-source-agreements --disable-interactivity 2>&1)
+        $exitCode = $LASTEXITCODE
+        $lines = Get-MeaningfulCommandLines -Lines $output
+        $joined = $lines -join [System.Environment]::NewLine
+        $escapedId = [regex]::Escape($Id)
+        $row = $lines | Where-Object { $_ -match "(^|\s)$escapedId(\s|$)" } | Select-Object -Last 1
+
+        if ($row) {
+            $columns = [regex]::Split($row.Trim(), '\s{2,}') | Where-Object { $_ -ne '' }
+            if ($columns.Count -ge 5) {
+                return [pscustomobject]@{
+                    querySucceeded = $true
+                    installed = $true
+                    installedVersion = $columns[2]
+                    availableVersion = $(if ([string]::IsNullOrWhiteSpace($columns[3]) -or $columns[3] -eq '-') { $null } else { $columns[3] })
+                    parseSucceeded = $true
+                    notes = @()
+                }
+            }
+
+            if ($columns.Count -eq 4) {
+                return [pscustomobject]@{
+                    querySucceeded = $true
+                    installed = $true
+                    installedVersion = $columns[2]
+                    availableVersion = $null
+                    parseSucceeded = $true
+                    notes = @()
+                }
+            }
+
+            return [pscustomobject]@{
+                querySucceeded = $true
+                installed = $true
+                installedVersion = $null
+                availableVersion = $null
+                parseSucceeded = $false
+                notes = @('La salida de winget list no se pudo parsear con suficiente certeza.') + @($lines)
+            }
+        }
+
+        if ($joined -match 'No installed package found matching input criteria') {
+            return [pscustomobject]@{
+                querySucceeded = $true
+                installed = $false
+                installedVersion = $null
+                availableVersion = $null
+                parseSucceeded = $true
+                notes = @()
+            }
+        }
+
+        if ($exitCode -eq 0) {
+            return [pscustomobject]@{
+                querySucceeded = $true
+                installed = $false
+                installedVersion = $null
+                availableVersion = $null
+                parseSucceeded = $true
+                notes = @()
+            }
+        }
+
+        return [pscustomobject]@{
+            querySucceeded = $false
+            installed = $false
+            installedVersion = $null
+            availableVersion = $null
+            parseSucceeded = $false
+            notes = @('winget list devolvió error al consultar el paquete.') + @($lines)
+        }
+    } catch {
+        return [pscustomobject]@{
+            querySucceeded = $false
+            installed = $false
+            installedVersion = $null
+            availableVersion = $null
+            parseSucceeded = $false
+            notes = @("No se pudo consultar winget list: $_")
+        }
+    }
+}
+
 Write-Log "INICIANDO AI CLI SENTINEL v3.1 (Patch)" -Color Cyan
 
-# Validación estricta de privilegios de administrador
 if (-not (Test-Admin)) {
     Write-Error "Se requieren privilegios de Administrador para la gestión de VSS y actualizaciones globales."
     exit
 }
 
-# 1. CARGA DE CONFIGURACIÓN
 $Config = @{ npm = @(); winget = @() }
 if (Test-Path $ConfigFile) {
     try {
         $Config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
-        # Validar estructura mínima requerida
         if (-not $Config.npm) { $Config.npm = @() }
         if (-not $Config.winget) { $Config.winget = @() }
-        $Config.npm = @($Config.npm | ForEach-Object { Normalize-NpmName $_ } | Where-Object { $_ } | Sort-Object -Unique)
+        $Config.npm = @($Config.npm | ForEach-Object { ConvertTo-NpmName $_ } | Where-Object { $_ } | Sort-Object -Unique)
         Write-Log "Configuración cargada: $($Config.npm.Count) agentes NPM, $($Config.winget.Count) agentes Winget." -Color Gray
     } catch {
-        # FIX: Usamos $($ConfigFile) para evitar error de parseo con los dos puntos
         Write-Log "Error al leer $($ConfigFile): $_" -Color Red -Level ERROR
         Write-Warning "Continuando con lista blanca vacía. Solo se ejecutará modo descubrimiento."
     }
@@ -146,23 +462,22 @@ if (Test-Path $ConfigFile) {
     Write-Warning "No se encontró $ConfigFile. Usando modo solo-descubrimiento o lista vacía."
 }
 
-# 2. MODO DESCUBRIMIENTO (AUDITORÍA SOLAMENTE)
 if ($Discover) {
     Write-Log ">>> EJECUTANDO MODO DESCUBRIMIENTO (Solo Reporte) <<<" -Color Magenta
     $Keywords = "ai|gpt|claude|bot|llm|chat|copilot|gemini|anthropic|openai|qwen|codex"
-    $Candidates = Initialize-Candidates
+    $Candidates = New-CandidatesDocument
+
     try {
         $InstalledJson = npm list -g --depth=0 --json 2>$null
         if ($InstalledJson) {
             $Installed = $InstalledJson | ConvertFrom-Json
             $CandidatesFound = $false
-            
+
             if ($Installed.dependencies) {
                 foreach ($pkg in $Installed.dependencies.PSObject.Properties) {
-                    # Si coincide con keyword Y NO está en la lista blanca
-                    $name = Normalize-NpmName $pkg.Name
+                    $name = ConvertTo-NpmName $pkg.Name
                     if (($name -match $Keywords) -and ($name -notin $Config.npm)) {
-                        $version = "unknown"
+                        $version = 'unknown'
                         if ($pkg.Value -and $pkg.Value.version) {
                             $version = $pkg.Value.version
                         }
@@ -170,9 +485,9 @@ if ($Discover) {
                         $Candidates.npm += [ordered]@{
                             name = $name
                             version = $version
-                            detectedAt = (Get-Date).ToString("o")
-                            status = "pending"
-                            source = "discover-npm"
+                            detectedAt = (Get-Date).ToString('o')
+                            status = 'pending'
+                            source = 'discover-npm'
                         }
 
                         Write-Log "[CANDIDATO DETECTADO] $name (v$version) - pendiente de aprobacion." -Color Yellow -Level WARN
@@ -180,7 +495,7 @@ if ($Discover) {
                     }
                 }
             }
-            
+
             if (-not $CandidatesFound) {
                 Write-Log "No se encontraron candidatos fuera de la lista blanca." -Color Gray
             } else {
@@ -194,11 +509,11 @@ if ($Discover) {
     } catch {
         Write-Log "Error durante descubrimiento: $_" -Color Red -Level ERROR
     }
+
     Write-Log "Fin del descubrimiento. No se realizaron cambios." -Color Magenta
-    return # Salimos porque Discover no debe actualizar
+    return
 }
 
-# 2.1 REVISIÓN / APROBACIÓN EXPLÍCITA DE CANDIDATOS
 if ($ApproveCandidates) {
     Write-Log ">>> EJECUTANDO MODO DE APROBACIÓN DE CANDIDATOS <<<" -Color Magenta
 
@@ -220,7 +535,7 @@ if ($ApproveCandidates) {
     $skipped = 0
 
     foreach ($candidate in $CandidateData.npm) {
-        $candidateName = Normalize-NpmName $candidate.name
+        $candidateName = ConvertTo-NpmName $candidate.name
         if (-not (Test-NpmPackageName -Name $candidateName)) {
             Write-Log "Candidato invalido, se omite: $($candidate.name)" -Color Yellow -Level WARN
             $skipped++
@@ -229,7 +544,7 @@ if ($ApproveCandidates) {
 
         if ($candidateName -in $Config.npm) {
             Write-Log "Ya estaba en allowlist: $candidateName" -Color Gray
-            $candidate.status = "already-allowed"
+            $candidate.status = 'already-allowed'
             $skipped++
             continue
         }
@@ -246,13 +561,13 @@ if ($ApproveCandidates) {
 
         if ($approve) {
             $Config.npm += $candidateName
-            $candidate.status = "approved"
-            $candidate.approvedAt = (Get-Date).ToString("o")
+            $candidate.status = 'approved'
+            $candidate.approvedAt = (Get-Date).ToString('o')
             $approved++
             Write-Log "Aprobado e incorporado: $candidateName" -Color Green
         } else {
-            $candidate.status = "rejected"
-            $candidate.rejectedAt = (Get-Date).ToString("o")
+            $candidate.status = 'rejected'
+            $candidate.rejectedAt = (Get-Date).ToString('o')
             $skipped++
             Write-Log "Rechazado: $candidateName" -Color DarkYellow -Level WARN
         }
@@ -268,126 +583,201 @@ if ($ApproveCandidates) {
     return
 }
 
-# 3. RESILIENCIA (SYSTEM RESTORE)
-# SupportsShouldProcess maneja automáticamente el -WhatIf aquí
-if ($PSCmdlet.ShouldProcess("Sistema Operativo", "Crear Punto de Restauración (VSS)")) {
+if ($PSCmdlet.ShouldProcess('Sistema Operativo', 'Crear Punto de Restauración (VSS)')) {
     try {
-        Checkpoint-Computer -Description "AI-Sentinel-Update" -RestorePointType APPLICATION_INSTALL -ErrorAction Stop
-        Write-Log "Punto de restauración VSS creado exitosamente." -Color Green
+        Checkpoint-Computer -Description 'AI-Sentinel-Update' -RestorePointType APPLICATION_INSTALL -ErrorAction Stop
+        Write-Log 'Punto de restauración VSS creado exitosamente.' -Color Green
     } catch {
         Write-Log "FALLO VSS: $_" -Color Red -Level ERROR
-        if ($PSCmdlet.ShouldContinue("¿Continuar sin punto de restauración?", "Advertencia de Seguridad")) {
-            Write-Log "Usuario decidió continuar sin VSS." -Color DarkYellow
+        if ($PSCmdlet.ShouldContinue('¿Continuar sin punto de restauración?', 'Advertencia de Seguridad')) {
+            Write-Log 'Usuario decidió continuar sin VSS.' -Color DarkYellow
         } else {
             exit
         }
     }
 }
 
-# 4. RESPALDO DE SECRETOS
 if ($BackupSecrets) {
-    if ($PSCmdlet.ShouldProcess("Archivos de Usuario", "Respaldar Secretos (.ssh, .config)")) {
+    if ($PSCmdlet.ShouldProcess('Archivos de Usuario', 'Respaldar Secretos (.ssh, .config)')) {
         $BackupDir = "$HOME\Desktop\AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
         $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
         New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
         foreach ($p in $Paths) {
-            if (Test-Path $p) { Copy-Item $p $BackupDir -Recurse -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $p) {
+                Copy-Item $p $BackupDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
         Write-Log "Secretos respaldados en $BackupDir" -Color Green
     }
 }
 
-# 5. ACTUALIZACIÓN SEGURA (LISTA BLANCA)
-# Validar que hay agentes para actualizar
 if ($Config.npm.Count -eq 0 -and $Config.winget.Count -eq 0) {
-    Write-Log "Lista blanca vacía. No hay agentes para actualizar." -Color Yellow -Level WARN
-    Write-Log "Usa -Discover para encontrar agentes instalados o edita agents.allowlist.json" -Color Gray
+    Write-Log 'Lista blanca vacía. No hay agentes para actualizar.' -Color Yellow -Level WARN
+    Write-Log 'Usa -Discover para encontrar agentes instalados o edita agents.allowlist.json' -Color Gray
     exit 0
 }
 
-$FailedOperations = @()
-$UpdatedOperations = @()
-$SkippedOperations = @()
+$OperationResults = @()
 
-# NPM
 if ($Config.npm.Count -gt 0) {
     Write-Log "Procesando $($Config.npm.Count) agente(s) NPM..." -Color Cyan
     foreach ($AgentName in $Config.npm) {
-        # Verificar si está instalado antes de intentar actualizar
         try {
-            $CheckJson = npm list -g $AgentName --depth=0 --json 2>$null
-            if ($CheckJson) {
-                $Check = $CheckJson | ConvertFrom-Json
-                if ($Check.dependencies.$AgentName) {
-                    if ($PSCmdlet.ShouldProcess($AgentName, "Actualizar NPM (Aislado)")) {
-                        Write-Log "Actualizando $AgentName..." -Color Cyan
-                        # --ignore-scripts: BLOQUEO DE MALWARE
-                        $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
-                        $npmExitCode = $LASTEXITCODE
-                        Write-CommandOutput -Prefix "NPM: " -Lines $npmOutput
-
-                        if ($npmExitCode -ne 0) {
-                            $FailedOperations += "NPM:$AgentName (exit=$npmExitCode)"
-                            Write-Log "Fallo al actualizar $AgentName (exit=$npmExitCode)." -Color Red -Level ERROR
-                            continue
-                        }
-
-                        $UpdatedOperations += "NPM:$AgentName"
-                    }
-                } else {
-                    Write-Log "Saltando $AgentName (No instalado)" -Color Gray
-                    $SkippedOperations += "NPM:$AgentName"
-                }
-            } else {
-                Write-Log "Saltando $AgentName (No se pudo verificar instalación)" -Color Yellow -Level WARN
-                $SkippedOperations += "NPM:$AgentName"
+            $installedInfo = Get-NpmInstalledPackageInfo -Name $AgentName
+            if (-not $installedInfo.querySucceeded) {
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -Notes $installedInfo.notes
+                Write-Log "Error consultando instalación NPM de $($AgentName)." -Color Red -Level ERROR
+                continue
             }
+
+            if (-not $installedInfo.installed) {
+                Write-Log "Saltando $AgentName (No instalado)" -Color Gray
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'not-installed' -Notes @('El paquete no está instalado globalmente.')
+                continue
+            }
+
+            $latestInfo = Get-NpmLatestVersion -Name $AgentName
+            if (-not $latestInfo.querySucceeded) {
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -Notes $latestInfo.notes
+                Write-Log "No se pudo determinar la versión más reciente de $($AgentName)." -Color Red -Level ERROR
+                continue
+            }
+
+            if ($installedInfo.installedVersion -eq $latestInfo.version) {
+                Write-Log "$AgentName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
+                continue
+            }
+
+            if ($PSCmdlet.ShouldProcess($AgentName, 'Actualizar NPM (Aislado)')) {
+                Write-Log "Actualizando $AgentName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
+                $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
+                $npmExitCode = $LASTEXITCODE
+                Write-CommandOutput -Prefix 'NPM: ' -Lines $npmOutput
+
+                if ($npmExitCode -ne 0) {
+                    $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @("npm install falló con exit=$npmExitCode.")
+                    Write-Log "Fallo al actualizar $AgentName (exit=$npmExitCode)." -Color Red -Level ERROR
+                    continue
+                }
+
+                $postInstallInfo = Get-NpmInstalledPackageInfo -Name $AgentName
+                if (-not $postInstallInfo.querySucceeded -or -not $postInstallInfo.installed) {
+                    $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -Notes @('La instalación terminó, pero no se pudo verificar la versión final.')
+                    Write-Log "No se pudo verificar la versión final de $AgentName tras la actualización." -Color Yellow -Level WARN
+                    continue
+                }
+
+                if ($postInstallInfo.installedVersion -eq $latestInfo.version) {
+                    $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'updated' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $postInstallInfo.installedVersion -Changed ($postInstallInfo.installedVersion -ne $installedInfo.installedVersion)
+                    continue
+                }
+
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $postInstallInfo.installedVersion -Notes @('La versión final no coincide con la versión objetivo reportada por npm view.')
+                Write-Log "Resultado incierto al verificar la versión final de $AgentName." -Color Yellow -Level WARN
+                continue
+            }
+
+            $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'would-update' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('Actualización omitida por -WhatIf.')
         } catch {
-            # FIX: Usamos $($AgentName) para evitar error de parseo
             Write-Log "Error procesando $($AgentName): $_" -Color Red -Level ERROR
-            $FailedOperations += "NPM:$AgentName (exception)"
+            $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -Notes @("Excepción no controlada: $_")
         }
     }
 }
 
-# Winget
 if ($Config.winget.Count -gt 0) {
     Write-Log "Procesando $($Config.winget.Count) aplicación(es) Winget..." -Color Cyan
     foreach ($AppId in $Config.winget) {
-        if ($PSCmdlet.ShouldProcess($AppId, "Actualizar Winget")) {
-            try {
-                $wingetOutput = @(winget upgrade --id $AppId --silent --accept-source-agreements --accept-package-agreements 2>&1)
+        try {
+            $installedInfo = Get-WingetInstalledPackageInfo -Id $AppId
+            if (-not $installedInfo.querySucceeded) {
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'failed' -Notes $installedInfo.notes
+                Write-Log "No se pudo consultar winget list para $($AppId)." -Color Red -Level ERROR
+                continue
+            }
+
+            if (-not $installedInfo.installed) {
+                Write-Log "Saltando $AppId (No instalado)" -Color Gray
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'not-installed' -Notes @('La aplicación no está instalada localmente.')
+                continue
+            }
+
+            if (-not $installedInfo.parseSucceeded) {
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -Notes $installedInfo.notes
+                Write-Log "No se pudo determinar con certeza el estado de $AppId desde winget list." -Color Yellow -Level WARN
+                continue
+            }
+
+            if ([string]::IsNullOrWhiteSpace($installedInfo.availableVersion)) {
+                Write-Log "$AppId ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -InstalledVersionAfter $installedInfo.installedVersion -Notes @('winget list no reporta versión disponible; se asume estado al día.')
+                continue
+            }
+
+            if ($installedInfo.availableVersion -eq $installedInfo.installedVersion) {
+                Write-Log "$AppId ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -InstalledVersionAfter $installedInfo.installedVersion
+                continue
+            }
+
+            if ($PSCmdlet.ShouldProcess($AppId, 'Actualizar Winget')) {
+                Write-Log "Actualizando $AppId de $($installedInfo.installedVersion) a $($installedInfo.availableVersion)..." -Color Cyan
+                $wingetOutput = @(winget upgrade --id $AppId --exact --silent --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1)
                 $wingetExitCode = $LASTEXITCODE
-                Write-CommandOutput -Prefix "Winget: " -Lines $wingetOutput
+                Write-CommandOutput -Prefix 'Winget: ' -Lines $wingetOutput
 
                 if ($wingetExitCode -ne 0) {
-                    $FailedOperations += "Winget:$AppId (exit=$wingetExitCode)"
+                    $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -InstalledVersionAfter $installedInfo.installedVersion -Notes @("winget upgrade falló con exit=$wingetExitCode.")
                     Write-Log "Fallo al actualizar $AppId (exit=$wingetExitCode)." -Color Red -Level ERROR
-
                     if (($wingetOutput -join [System.Environment]::NewLine) -imatch '0x80070005') {
-                        Write-Log "Diagnóstico: Access denied (0x80070005). Verifica privilegios elevados y que la app no esté en uso." -Color Yellow -Level WARN
+                        Write-Log 'Diagnóstico: Access denied (0x80070005). Verifica privilegios elevados y que la app no esté en uso.' -Color Yellow -Level WARN
                     }
                     continue
                 }
 
-                $UpdatedOperations += "Winget:$AppId"
-            } catch {
-                # FIX: Usamos $($AppId) para evitar error de parseo
-                Write-Log "Error actualizando $($AppId): $_" -Color Red -Level ERROR
-                $FailedOperations += "Winget:$AppId (exception)"
+                $postInstallInfo = Get-WingetInstalledPackageInfo -Id $AppId
+                if (-not $postInstallInfo.querySucceeded -or -not $postInstallInfo.installed) {
+                    $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -Notes @('La actualización terminó, pero no se pudo verificar la versión final mediante winget list.')
+                    Write-Log "No se pudo verificar la versión final de $AppId tras la actualización." -Color Yellow -Level WARN
+                    continue
+                }
+
+                if ($postInstallInfo.installedVersion -eq $installedInfo.availableVersion) {
+                    $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'updated' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -InstalledVersionAfter $postInstallInfo.installedVersion -Changed ($postInstallInfo.installedVersion -ne $installedInfo.installedVersion)
+                    continue
+                }
+
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -InstalledVersionAfter $postInstallInfo.installedVersion -Notes @('La versión final no coincide con la versión disponible detectada antes de actualizar.')
+                Write-Log "Resultado incierto al verificar la versión final de $AppId." -Color Yellow -Level WARN
+                continue
             }
+
+            $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'would-update' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $installedInfo.availableVersion -InstalledVersionAfter $installedInfo.installedVersion -Notes @('Actualización omitida por -WhatIf.')
+        } catch {
+            Write-Log "Error actualizando $($AppId): $_" -Color Red -Level ERROR
+            $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'failed' -Notes @("Excepción no controlada: $_")
         }
     }
 }
 
-Write-Log "Resumen: actualizados=$($UpdatedOperations.Count), omitidos=$($SkippedOperations.Count), fallidos=$($FailedOperations.Count)" -Color Cyan
+$counts = Write-OperationSummary -Results $OperationResults
+$RunEndedAt = Get-Date
+$exitCode = 0
+if ($counts['failed'] -gt 0) {
+    $exitCode = 1
+}
 
-if ($FailedOperations.Count -gt 0) {
-    foreach ($failure in $FailedOperations) {
-        Write-Log "Fallo registrado: $failure" -Color Red -Level ERROR
-    }
-    Write-Log "Protocolo Sentinel finalizó con errores." -Color Red -Level ERROR
+$reportWritten = Write-RunReport -Results $OperationResults -StartedAt $RunStartedAt -EndedAt $RunEndedAt -Counts $counts -ExitCode $exitCode
+
+if (-not $reportWritten) {
+    Write-Log 'Protocolo Sentinel finalizó con errores al escribir el reporte JSON.' -Color Red -Level ERROR
     exit 1
 }
 
-Write-Log "Protocolo Sentinel finalizado correctamente." -Color Green
+if ($exitCode -ne 0) {
+    Write-Log 'Protocolo Sentinel finalizó con errores.' -Color Red -Level ERROR
+    exit 1
+}
+
+Write-Log 'Protocolo Sentinel finalizado correctamente.' -Color Green

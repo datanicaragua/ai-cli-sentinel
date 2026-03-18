@@ -54,6 +54,7 @@ Esto tiene tres limitaciones:
 Cada agente procesado debe terminar en exactamente uno de estos estados:
 
 - `updated`: había una versión más reciente y se instaló correctamente.
+- `would-update`: hay una versión más reciente, pero la ejecución fue en `-WhatIf` y no se realizaron cambios.
 - `already-current`: ya estaba en la versión disponible más reciente.
 - `not-installed`: estaba en allowlist, pero no estaba instalado localmente.
 - `failed`: el flujo de consulta o actualización falló.
@@ -74,10 +75,12 @@ Cada operación agregará un objeto con esta forma:
   "availableVersionBefore": "1.2.5",
   "installedVersionAfter": "1.2.5",
   "changed": true,
-  "timestamp": "2026-03-18T00:00:00.0000000Z",
+  "timestamp": "YYYY-MM-DDTHH:mm:ss.sssZ",
   "notes": []
 }
 ```
+
+`timestamp` representa la marca temporal UTC, en formato ISO 8601, del resultado individual de ese agente dentro de la ejecución.
 
 ### Archivo de salida
 
@@ -140,18 +143,26 @@ Winget es más irregular que NPM para automatización silenciosa, por lo que el 
 1. Consultar estado previo con:
 
 ```powershell
-winget list --id <id>
+winget list --id <id> --exact --accept-source-agreements --disable-interactivity
 ```
 
-2. Consultar si existe upgrade disponible con:
+2. Consultar si existe un upgrade disponible parseando la salida de:
 
 ```powershell
-winget upgrade --id <id>
+winget list --id <id> --exact --accept-source-agreements --disable-interactivity
 ```
 
 3. Si no hay upgrade disponible: `already-current`
 4. Si hay upgrade disponible: ejecutar actualización
 5. Tras actualizar, releer `winget list --id <id>` y registrar versión final
+
+La expectativa es usar el propio resultado de `winget list` para obtener, cuando sea posible:
+
+- versión instalada,
+- versión disponible,
+- evidencia suficiente para decidir si corresponde actualizar.
+
+Si la salida no permite inferir con certeza el estado, el agente debe marcarse como `unknown` en lugar de forzar una actualización ciega.
 
 ### Nota operativa
 
@@ -172,13 +183,14 @@ Resumen: actualizados=X, omitidos=Y, fallidos=Z
 Debe evolucionar hacia algo como:
 
 ```text
-Resumen: updated=2, already-current=3, not-installed=1, failed=0, unknown=0
+Resumen: updated=2, would-update=1, already-current=3, not-installed=1, failed=0, unknown=0
 ```
 
 Y además, por cada agente:
 
 ```text
 NPM | @github/copilot | 1.2.3 -> 1.2.5 | updated
+NPM | @google/gemini-cli | 0.4.0 -> 0.5.0 | would-update
 NPM | @openai/codex   | 0.9.1 -> 0.9.1 | already-current
 Winget | GitHub.cli   | 2.68.1 -> 2.69.0 | updated
 ```
@@ -190,7 +202,7 @@ Mantener la política actual con una semántica más precisa:
 - `0` si no hubo fallos operativos, aunque no haya actualizaciones reales.
 - `1` si una o más operaciones terminan en `failed`.
 
-`already-current`, `not-installed` y `unknown` no deben marcar fallo por sí solos, salvo que el proyecto decida endurecer `unknown` en el futuro.
+`would-update`, `already-current`, `not-installed` y `unknown` no deben marcar fallo por sí solos, salvo que el proyecto decida endurecer `unknown` en el futuro.
 
 ## Parámetros Nuevos Propuestos
 
@@ -206,7 +218,6 @@ No es necesario introducir un flag tipo `-SkipIfUpdatedToday`, porque ese enfoqu
 - `Get-NpmInstalledPackageInfo`
 - `Get-NpmLatestVersion`
 - `Get-WingetInstalledPackageInfo`
-- `Get-WingetUpgradeInfo`
 - `New-OperationResult`
 - `Write-RunReport`
 - `Write-OperationSummary`
@@ -227,7 +238,7 @@ Agregar pruebas que verifiquen al menos:
 
 1. El script define helpers para consulta de versión.
 2. El script expone `-ReportPath`.
-3. El resumen final distingue `updated` y `already-current`.
+3. El resumen final distingue `updated`, `would-update` y `already-current`.
 4. La lógica sigue usando `--ignore-scripts` para NPM.
 5. El reporte JSON se escribe fuera de `-WhatIf`, o se omite explícitamente en simulación según la política que se adopte.
 
@@ -259,10 +270,11 @@ Mitigación:
 
 1. Si un agente ya está en la última versión, no se ejecuta la actualización para ese agente.
 2. El resumen final no llama "actualizado" a un agente que ya estaba al día.
-3. La salida muestra `antes -> después` cuando hay evidencia suficiente.
-4. Se genera un reporte JSON estructurado por ejecución.
-5. `-WhatIf` no realiza cambios ni escritura de log/reporte destructivo.
-6. Los tests siguen pasando en el runner del proyecto.
+3. En `-WhatIf`, un agente con actualización disponible se clasifica como `would-update`.
+4. La salida muestra `antes -> después` cuando hay evidencia suficiente.
+5. Se genera un reporte JSON estructurado por ejecución fuera de `-WhatIf`.
+6. `-WhatIf` no realiza cambios ni escritura de log/reporte destructivo.
+7. Los tests siguen pasando en el runner del proyecto.
 
 ## Rama y Título Propuestos
 
