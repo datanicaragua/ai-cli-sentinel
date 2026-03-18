@@ -316,8 +316,7 @@ if ($Config.npm.Count -gt 0) {
                     if ($PSCmdlet.ShouldProcess($AgentName, "Actualizar NPM (Aislado)")) {
                         Write-Log "Actualizando $AgentName..." -Color Cyan
                         # --ignore-scripts: BLOQUEO DE MALWARE
-                        # --save-exact: EVITAR DRIFT DE VERSIONES
-                        $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts --save-exact 2>&1)
+                        $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
                         $npmExitCode = $LASTEXITCODE
                         Write-CommandOutput -Prefix "NPM: " -Lines $npmOutput
 
@@ -359,7 +358,7 @@ if ($Config.winget.Count -gt 0) {
                     $FailedOperations += "Winget:$AppId (exit=$wingetExitCode)"
                     Write-Log "Fallo al actualizar $AppId (exit=$wingetExitCode)." -Color Red -Level ERROR
 
-                    if (($wingetOutput -join "`n") -match '0x80070005') {
+                    if (($wingetOutput -join [System.Environment]::NewLine) -imatch '0x80070005') {
                         Write-Log "Diagnóstico: Access denied (0x80070005). Verifica privilegios elevados y que la app no esté en uso." -Color Yellow -Level WARN
                     }
                     continue
