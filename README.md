@@ -89,9 +89,23 @@ Actualiza solo los agentes en la lista blanca con respaldo de secretos:
 .\src\AI-CLI-Sentinel.ps1 -BackupSecrets
 ```
 
+Comportamiento funcional:
+- Primero compara la versión instalada contra la versión disponible.
+- Solo ejecuta la actualización cuando detecta una versión más reciente.
+- Genera un reporte JSON estructurado con el detalle `antes -> después` por agente, salvo que uses `-NoReport`.
+- Si no puede escribir el reporte JSON solicitado, la ejecución se considera fallida para no perder trazabilidad.
+
 Comportamiento de salida:
 - Devuelve `0` cuando todas las operaciones completan sin fallos.
 - Devuelve `1` si una o más actualizaciones fallan (útil para automatización/CI).
+
+Resumen esperado por estados:
+- `updated`: se instaló una versión más reciente.
+- `would-update`: hay una versión más reciente, pero la ejecución fue con `-WhatIf`.
+- `already-current`: el agente ya estaba al día.
+- `not-installed`: el agente está en allowlist, pero no está instalado localmente.
+- `failed`: hubo un fallo operativo al consultar o actualizar.
+- `unknown`: no se pudo determinar el estado final con certeza.
 
 ### Modo Simulación (WhatIf)
 
@@ -100,6 +114,9 @@ Ver qué haría el script sin realizar cambios:
 ```powershell
 .\src\AI-CLI-Sentinel.ps1 -WhatIf
 ```
+
+En este modo, los agentes con una versión más reciente disponible se reportan como `would-update`.
+No se escriben ni el archivo de log ni el reporte JSON para evitar efectos laterales.
 
 ### Modo Descubrimiento (Auditoría)
 
@@ -198,6 +215,20 @@ Esto te permite entender exactamente qué hará el script antes de ejecutarlo re
 .\src\AI-CLI-Sentinel.ps1 -LogPath "C:\Logs\sentinel.log" -BackupSecrets
 ```
 
+### Personalizar Ruta del Reporte JSON
+
+```powershell
+.\src\AI-CLI-Sentinel.ps1 -ReportPath "C:\Logs\sentinel-report.json" -BackupSecrets
+```
+
+Si la ruta indicada no es escribible y no usas `-NoReport`, el script terminará con error para evitar una ejecución sin evidencia estructurada.
+
+Para desactivar el reporte estructurado en una ejecución puntual:
+
+```powershell
+.\src\AI-CLI-Sentinel.ps1 -NoReport -BackupSecrets
+```
+
 ## 📁 Estructura del Proyecto
 
 ```
@@ -270,7 +301,7 @@ Ejecutar tests desde terminal (runner robusto):
 ¿Para qué sirven estos tests?
 - Verifican que el script principal exista y mantenga parámetros esperados como `-Discover`, `-BackupSecrets` y `-ConfigFile`.
 - Validan que la configuración JSON tenga estructura correcta.
-- Detectan regresiones básicas en sintaxis PowerShell y en decisiones de seguridad ya implementadas.
+- Detectan regresiones básicas en sintaxis PowerShell, decisiones de seguridad y el nuevo contrato de actualización por versión/reporte estructurado.
 
 Si solo vas a usar la herramienta y no estás modificando código, normalmente **no necesitas ejecutar estos tests**. Están orientados sobre todo a desarrollo, mantenimiento y validación antes de publicar cambios.
 
