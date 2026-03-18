@@ -273,7 +273,6 @@ Ejecutar tests desde terminal (runner robusto):
 - Detectan regresiones básicas en sintaxis PowerShell y en decisiones de seguridad ya implementadas.
 
 Si solo vas a usar la herramienta y no estás modificando código, normalmente **no necesitas ejecutar estos tests**. Están orientados sobre todo a desarrollo, mantenimiento y validación antes de publicar cambios.
-- Después de atender comentarios de review (bots/humanos).
 
 ## 🔒 Seguridad
 
