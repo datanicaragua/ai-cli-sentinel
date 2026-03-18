@@ -6,7 +6,7 @@ Sistema de seguridad para monitoreo y protección de interfaces de línea de com
 
 ## ¿Por qué necesito AI-CLI-Sentinel?
 
-Si usas herramientas de inteligencia artificial en tu terminal (como **Gemini**, **Claude**, o **Codex**), necesitas mantenerlas actualizadas para obtener las últimas mejoras. Sin embargo, actualizar software desde internet puede ser riesgoso. **AI-CLI-Sentinel** es tu "cinturón de seguridad": automatiza la actualización de tus agentes favoritos asegurándose de que, si algo sale mal o el paquete contiene errores, tu computadora y tus llaves de acceso (API Keys) estén protegidas.
+Si usas herramientas de inteligencia artificial en tu terminal (como **Gemini**, **Claude**, **Codex** o **GitHub Copilot**), necesitas mantenerlas actualizadas para obtener las últimas mejoras. Sin embargo, actualizar software desde internet puede ser riesgoso. **AI-CLI-Sentinel** es tu "cinturón de seguridad": automatiza la actualización de tus agentes favoritos asegurándose de que, si algo sale mal o el paquete contiene errores, tu computadora y tus llaves de acceso (API Keys) estén protegidas.
 
 ### ✅ Checklist de Confianza
 
@@ -28,6 +28,7 @@ AI-CLI-Sentinel gestiona de forma segura los siguientes agentes de IA:
 | **Claude Code** | Anthropic | Programación en pareja (Pair programming) avanzada. |
 | **Codex CLI** | OpenAI | Generación de comandos y lógica de programación. |
 | **Qwen Code** | Alibaba | Modelos de lenguaje especializados en código. |
+| **GitHub Copilot CLI** | GitHub | Asistencia de IA para comandos y flujos en terminal. |
 
 > **Nota:** Puedes agregar más agentes editando el archivo `src/agents.allowlist.json`. Solo se actualizarán los agentes que estén explícitamente en tu lista blanca.
 

@@ -4,7 +4,8 @@
     "@google/gemini-cli",
     "@anthropic-ai/claude-code",
     "@openai/codex",
-    "@qwen-code/qwen-code"
+    "@qwen-code/qwen-code",
+    "@github/copilot"
   ],
   "winget": [
     "GitHub.cli"

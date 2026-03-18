@@ -51,6 +51,7 @@ Estado: **COMPLETADO Y OPTIMIZADO**
   - `@anthropic-ai/claude-code`
   - `@openai/codex`
   - `@qwen-code/qwen-code`
+  - `@github/copilot`
   - `GitHub.cli` (winget)
 
 #### C. Pruebas (tests/AI-CLI-Sentinel.tests.ps1) ✅
