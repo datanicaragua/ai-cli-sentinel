@@ -89,6 +89,8 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match 'function Get-WingetInstalledPackageInfo'
             $ScriptContent | Should -Match 'winget list --id'
             $ScriptContent | Should -Match '--disable-interactivity'
+            $ScriptContent | Should -Match 'patternWithAvailable'
+            $ScriptContent | Should -Match 'patternWithoutAvailable'
         }
 
         It "Debe definir resultados estructurados y reporte JSON" {

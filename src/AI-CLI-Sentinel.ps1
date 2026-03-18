@@ -364,23 +364,26 @@ function Get-WingetInstalledPackageInfo {
         $row = $lines | Where-Object { $_ -match "(^|\s)$escapedId(\s|$)" } | Select-Object -Last 1
 
         if ($row) {
-            $columns = [regex]::Split($row.Trim(), '\s{2,}') | Where-Object { $_ -ne '' }
-            if ($columns.Count -ge 5) {
+            $rowTrimmed = $row.Trim()
+            $patternWithAvailable = "^(?<name>.+?)\s+$escapedId\s+(?<installed>\S+)\s+(?<available>\S+)\s+(?<source>\S+)$"
+            $patternWithoutAvailable = "^(?<name>.+?)\s+$escapedId\s+(?<installed>\S+)\s+(?<source>\S+)$"
+
+            if ($rowTrimmed -match $patternWithAvailable) {
                 return [pscustomobject]@{
                     querySucceeded = $true
                     installed = $true
-                    installedVersion = $columns[2]
-                    availableVersion = $(if ([string]::IsNullOrWhiteSpace($columns[3]) -or $columns[3] -eq '-') { $null } else { $columns[3] })
+                    installedVersion = $Matches.installed
+                    availableVersion = $(if ([string]::IsNullOrWhiteSpace($Matches.available) -or $Matches.available -eq '-') { $null } else { $Matches.available })
                     parseSucceeded = $true
                     notes = @()
                 }
             }
 
-            if ($columns.Count -eq 4) {
+            if ($rowTrimmed -match $patternWithoutAvailable) {
                 return [pscustomobject]@{
                     querySucceeded = $true
                     installed = $true
-                    installedVersion = $columns[2]
+                    installedVersion = $Matches.installed
                     availableVersion = $null
                     parseSucceeded = $true
                     notes = @()
