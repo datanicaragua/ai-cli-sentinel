@@ -76,6 +76,10 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match "--ignore-scripts"
         }
 
+        It "No debe escribir el archivo de log durante -WhatIf" {
+            $ScriptContent | Should -Match 'if \(\$WhatIfPreference\)'
+        }
+
         It "No debe usar --save-exact en instalación NPM global" {
             $ScriptContent | Should -Not -Match '--save-exact'
         }

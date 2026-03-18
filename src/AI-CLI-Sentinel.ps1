@@ -56,6 +56,12 @@ function Write-Log {
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $Line = "[$TimeStamp] [$Level] $Message"
     Write-Host $Line -ForegroundColor $Color
+
+    # En -WhatIf evitamos efectos laterales y ruido de ShouldProcess del propio log.
+    if ($WhatIfPreference) {
+        return
+    }
+
     $Line | Out-File -FilePath $LogPath -Append -Encoding UTF8
 }
 
