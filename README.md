@@ -104,7 +104,23 @@ Buscar agentes de IA instalados que NO están en la lista blanca:
 .\src\AI-CLI-Sentinel.ps1 -Discover
 ```
 
-Este modo **NO realiza cambios**, solo reporta candidatos detectados.
+Este modo **NO realiza cambios** de actualización. Exporta candidatos detectados en `src\agents.candidates.json` para revisión.
+
+### Aprobar Candidatos Detectados (Paso Explícito)
+
+Revisar candidatos y decidir si se agregan a la lista blanca:
+
+```powershell
+.\src\AI-CLI-Sentinel.ps1 -ApproveCandidates
+```
+
+Modo no interactivo (aprobación de todos los pendientes):
+
+```powershell
+.\src\AI-CLI-Sentinel.ps1 -ApproveCandidates -AutoApproveCandidates
+```
+
+Este modo **solo actualiza la allowlist**. Luego ejecuta el flujo estándar para actualizar paquetes.
 
 ## 📘 Guía Rápida para Usuarios No Técnicos
 

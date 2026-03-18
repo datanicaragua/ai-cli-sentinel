@@ -13,6 +13,15 @@
     Modo de auditoría. Busca posibles agentes de IA instalados que NO están en la lista blanca.
     NO realiza cambios, solo reporta.
 
+.PARAMETER CandidatesFile
+    Ruta al archivo JSON usado para exportar candidatos detectados y revisar aprobaciones.
+
+.PARAMETER ApproveCandidates
+    Revisa candidatos previamente detectados y permite agregarlos de forma explícita a la lista blanca.
+
+.PARAMETER AutoApproveCandidates
+    Aprueba todos los candidatos pendientes sin interacción (uso controlado/no interactivo).
+
 .PARAMETER BackupSecrets
     Realiza una copia de seguridad de .ssh y .config antes de operar.
 
@@ -33,7 +42,10 @@ param (
     [string]$ConfigFile = "$PSScriptRoot\agents.allowlist.json",
     [switch]$Discover,
     [switch]$BackupSecrets,
-    [string]$LogPath = "$HOME\Desktop\AI_Sentinel_Log.txt"
+    [string]$LogPath = "$HOME\Desktop\AI_Sentinel_Log.txt",
+    [string]$CandidatesFile = "$PSScriptRoot\agents.candidates.json",
+    [switch]$ApproveCandidates,
+    [switch]$AutoApproveCandidates
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,6 +61,39 @@ function Write-Log {
 
 function Test-Admin {
     return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Save-JsonFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [object]$Object,
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    $json = $Object | ConvertTo-Json -Depth 10
+    $json | Set-Content -Path $Path -Encoding UTF8
+}
+
+function Initialize-Candidates {
+    return [ordered]@{
+        generatedAt = (Get-Date).ToString("o")
+        npm = @()
+    }
+}
+
+function Normalize-NpmName {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $null }
+    return $Name.Trim().ToLowerInvariant()
+}
+
+function Test-NpmPackageName {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+
+    # Validacion conservadora para scoped/unscoped packages.
+    return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
 }
 
 # --- INICIO DEL PROCESO ---
@@ -68,6 +113,7 @@ if (Test-Path $ConfigFile) {
         # Validar estructura mínima requerida
         if (-not $Config.npm) { $Config.npm = @() }
         if (-not $Config.winget) { $Config.winget = @() }
+        $Config.npm = @($Config.npm | ForEach-Object { Normalize-NpmName $_ } | Where-Object { $_ } | Sort-Object -Unique)
         Write-Log "Configuración cargada: $($Config.npm.Count) agentes NPM, $($Config.winget.Count) agentes Winget." -Color Gray
     } catch {
         # FIX: Usamos $($ConfigFile) para evitar error de parseo con los dos puntos
@@ -82,6 +128,7 @@ if (Test-Path $ConfigFile) {
 if ($Discover) {
     Write-Log ">>> EJECUTANDO MODO DESCUBRIMIENTO (Solo Reporte) <<<" -Color Magenta
     $Keywords = "ai|gpt|claude|bot|llm|chat|copilot|gemini|anthropic|openai|qwen|codex"
+    $Candidates = Initialize-Candidates
     try {
         $InstalledJson = npm list -g --depth=0 --json 2>$null
         if ($InstalledJson) {
@@ -91,8 +138,28 @@ if ($Discover) {
             if ($Installed.dependencies) {
                 foreach ($pkg in $Installed.dependencies.PSObject.Properties) {
                     # Si coincide con keyword Y NO está en la lista blanca
-                    if (($pkg.Name -match $Keywords) -and ($pkg.Name -notin $Config.npm)) {
-                        Write-Log "[CANDIDATO DETECTADO] $($pkg.Name) - ¿Agregar a agents.allowlist.json?" -Color Yellow -Level WARN
+                    $name = Normalize-NpmName $pkg.Name
+                    if (($name -match $Keywords) -and ($name -notin $Config.npm)) {
+                        $version = $null
+                        try {
+                            $depProp = $Installed.dependencies.PSObject.Properties | Where-Object { $_.Name -eq $pkg.Name } | Select-Object -First 1
+                            if ($depProp -and $depProp.Value) {
+                                $version = $depProp.Value.version
+                            }
+                        } catch {
+                            $version = "unknown"
+                        }
+                        if (-not $version) { $version = "unknown" }
+
+                        $Candidates.npm += [ordered]@{
+                            name = $name
+                            version = $version
+                            detectedAt = (Get-Date).ToString("o")
+                            status = "pending"
+                            source = "discover-npm"
+                        }
+
+                        Write-Log "[CANDIDATO DETECTADO] $name (v$version) - pendiente de aprobacion." -Color Yellow -Level WARN
                         $CandidatesFound = $true
                     }
                 }
@@ -100,6 +167,10 @@ if ($Discover) {
             
             if (-not $CandidatesFound) {
                 Write-Log "No se encontraron candidatos fuera de la lista blanca." -Color Gray
+            } else {
+                Save-JsonFile -Object $Candidates -Path $CandidatesFile
+                Write-Log "Candidatos exportados en: $CandidatesFile" -Color Cyan
+                Write-Log "Siguiente paso recomendado: ejecutar -ApproveCandidates para revisar y aprobar." -Color Gray
             }
         } else {
             Write-Log "No se pudo obtener lista de paquetes NPM instalados globalmente." -Color Yellow -Level WARN
@@ -109,6 +180,76 @@ if ($Discover) {
     }
     Write-Log "Fin del descubrimiento. No se realizaron cambios." -Color Magenta
     return # Salimos porque Discover no debe actualizar
+}
+
+# 2.1 REVISIÓN / APROBACIÓN EXPLÍCITA DE CANDIDATOS
+if ($ApproveCandidates) {
+    Write-Log ">>> EJECUTANDO MODO DE APROBACIÓN DE CANDIDATOS <<<" -Color Magenta
+
+    if (-not (Test-Path $CandidatesFile)) {
+        Write-Log "No se encontró archivo de candidatos: $CandidatesFile" -Color Yellow -Level WARN
+        Write-Log "Primero ejecuta -Discover para generar candidatos." -Color Gray
+        exit 0
+    }
+
+    try {
+        $CandidateData = Get-Content $CandidatesFile -Raw | ConvertFrom-Json
+        if (-not $CandidateData.npm) { $CandidateData.npm = @() }
+    } catch {
+        Write-Log "Error al leer candidatos en $($CandidatesFile): $_" -Color Red -Level ERROR
+        exit 1
+    }
+
+    $approved = 0
+    $skipped = 0
+
+    foreach ($candidate in $CandidateData.npm) {
+        $candidateName = Normalize-NpmName $candidate.name
+        if (-not (Test-NpmPackageName -Name $candidateName)) {
+            Write-Log "Candidato invalido, se omite: $($candidate.name)" -Color Yellow -Level WARN
+            $skipped++
+            continue
+        }
+
+        if ($candidateName -in $Config.npm) {
+            Write-Log "Ya estaba en allowlist: $candidateName" -Color Gray
+            $candidate.status = "already-allowed"
+            $skipped++
+            continue
+        }
+
+        $approve = $false
+        if ($AutoApproveCandidates) {
+            $approve = $true
+        } else {
+            $choice = Read-Host "Agregar '$candidateName' a allowlist? [y/N]"
+            if ($choice -match '^(y|yes|s|si)$') {
+                $approve = $true
+            }
+        }
+
+        if ($approve) {
+            $Config.npm += $candidateName
+            $candidate.status = "approved"
+            $candidate.approvedAt = (Get-Date).ToString("o")
+            $approved++
+            Write-Log "Aprobado e incorporado: $candidateName" -Color Green
+        } else {
+            $candidate.status = "rejected"
+            $candidate.rejectedAt = (Get-Date).ToString("o")
+            $skipped++
+            Write-Log "Rechazado: $candidateName" -Color DarkYellow -Level WARN
+        }
+    }
+
+    $Config.npm = @($Config.npm | Sort-Object -Unique)
+    Save-JsonFile -Object $Config -Path $ConfigFile
+    Save-JsonFile -Object $CandidateData -Path $CandidatesFile
+
+    Write-Log "Resumen aprobación: aprobados=$approved, omitidos/rechazados=$skipped" -Color Cyan
+    Write-Log "Allowlist actualizada en: $ConfigFile" -Color Green
+    Write-Log "Este modo no actualiza paquetes. Ejecuta el flujo estándar para actualizar." -Color Gray
+    return
 }
 
 # 3. RESILIENCIA (SYSTEM RESTORE)
