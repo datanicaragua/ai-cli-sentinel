@@ -89,6 +89,10 @@ Actualiza solo los agentes en la lista blanca con respaldo de secretos:
 .\src\AI-CLI-Sentinel.ps1 -BackupSecrets
 ```
 
+Comportamiento de salida:
+- Devuelve `0` cuando todas las operaciones completan sin fallos.
+- Devuelve `1` si una o más actualizaciones fallan (útil para automatización/CI).
+
 ### Modo Simulación (WhatIf)
 
 Ver qué haría el script sin realizar cambios:
