@@ -40,8 +40,8 @@ if ($pester.Version.Major -ge 5) {
     }
 }
 else {
-    Invoke-Pester $testsPath
-    if ($FailOnError -and $LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    $result = Invoke-Pester -Path $testsPath -PassThru
+    if ($FailOnError -and $result.FailedCount -gt 0) {
+        exit 1
     }
 }

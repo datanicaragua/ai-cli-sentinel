@@ -5,6 +5,7 @@ Describe "AI-CLI-Sentinel Tests" {
         # Configurar variables de entorno para tests
         $TestConfigPath = Join-Path $PSScriptRoot "..\src\agents.allowlist.json"
         $ScriptPath = Join-Path $PSScriptRoot "..\src\AI-CLI-Sentinel.ps1"
+        $ScriptContent = Get-Content $ScriptPath -Raw
     }
     
     Context "Archivo de Configuración" {
@@ -36,53 +37,43 @@ Describe "AI-CLI-Sentinel Tests" {
         }
         
         It "Debe tener función Write-Log definida" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "function Write-Log"
+            $ScriptContent | Should -Match "function Write-Log"
         }
         
         It "Debe tener función Test-Admin definida" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "function Test-Admin"
+            $ScriptContent | Should -Match "function Test-Admin"
         }
         
         It "Debe soportar ShouldProcess para WhatIf" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "SupportsShouldProcess"
+            $ScriptContent | Should -Match "SupportsShouldProcess"
         }
         
         It "Debe tener parámetro Discover" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match '\[switch\]\$Discover'
+            $ScriptContent | Should -Match '\[switch\]\$Discover'
         }
         
         It "Debe tener parámetro BackupSecrets" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match '\[switch\]\$BackupSecrets'
+            $ScriptContent | Should -Match '\[switch\]\$BackupSecrets'
         }
         
         It "Debe tener parámetro ConfigFile" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match '\[string\]\$ConfigFile'
+            $ScriptContent | Should -Match '\[string\]\$ConfigFile'
         }
         
         It "Debe implementar modo Discover" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "MODO DESCUBRIMIENTO"
+            $ScriptContent | Should -Match "MODO DESCUBRIMIENTO"
         }
         
         It "Debe implementar creación de punto de restauración VSS" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "Checkpoint-Computer"
+            $ScriptContent | Should -Match "Checkpoint-Computer"
         }
         
         It "Debe implementar respaldo de secretos" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "BackupSecrets"
+            $ScriptContent | Should -Match "BackupSecrets"
         }
         
         It "Debe usar --ignore-scripts en instalaciones NPM" {
-            $scriptContent = Get-Content $ScriptPath -Raw
-            $scriptContent | Should -Match "--ignore-scripts"
+            $ScriptContent | Should -Match "--ignore-scripts"
         }
     }
     
