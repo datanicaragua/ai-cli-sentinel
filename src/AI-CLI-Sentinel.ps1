@@ -442,6 +442,95 @@ function Get-WingetInstalledPackageInfo {
     }
 }
 
+function Get-UvInstalledToolInfo {
+    param([string]$Name)
+
+    try {
+        $output = @(uv tool list 2>&1)
+        $exitCode = $LASTEXITCODE
+        $lines = Get-MeaningfulCommandLines -Lines $output
+
+        if ($exitCode -ne 0) {
+            return [pscustomobject]@{
+                querySucceeded = $false
+                installed = $false
+                installedVersion = $null
+                availableVersion = $null
+                notes = @('uv tool list devolvió error al consultar herramientas instaladas.') + @($lines)
+            }
+        }
+
+        $escapedName = [regex]::Escape($Name)
+        $row = $lines | Where-Object { $_ -match "^$escapedName\s+v(?<version>\S+)" } | Select-Object -Last 1
+        if (-not $row) {
+            return [pscustomobject]@{
+                querySucceeded = $true
+                installed = $false
+                installedVersion = $null
+                availableVersion = $null
+                notes = @()
+            }
+        }
+
+        # El filtro previo ya garantiza la captura de version con este formato.
+        $installedVersion = ($row -replace "^$escapedName\s+v", '').Trim()
+        return [pscustomobject]@{
+            querySucceeded = $true
+            installed = $true
+            installedVersion = $installedVersion
+            availableVersion = $null
+            notes = @()
+        }
+    } catch {
+        return [pscustomobject]@{
+            querySucceeded = $false
+            installed = $false
+            installedVersion = $null
+            availableVersion = $null
+            notes = @("No se pudo consultar uv tool list: $_")
+        }
+    }
+}
+
+function Normalize-VersionToken {
+    param([string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return $null
+    }
+
+    return $Version.Trim().TrimStart('v', 'V')
+}
+
+function Get-PypiLatestVersion {
+    param([string]$Name)
+
+    try {
+        $uri = "https://pypi.org/pypi/$Name/json"
+        $response = Invoke-RestMethod -Method Get -Uri $uri -TimeoutSec 15 -ErrorAction Stop
+        $version = "$($response.info.version)"
+        if ([string]::IsNullOrWhiteSpace($version)) {
+            return [pscustomobject]@{
+                querySucceeded = $false
+                version = $null
+                notes = @('PyPI respondió sin versión utilizable.')
+            }
+        }
+
+        return [pscustomobject]@{
+            querySucceeded = $true
+            version = $version
+            notes = @()
+        }
+    } catch {
+        return [pscustomobject]@{
+            querySucceeded = $false
+            version = $null
+            notes = @("No se pudo consultar versión en PyPI para $($Name): $_")
+        }
+    }
+}
+
 Write-Log "INICIANDO AI CLI SENTINEL v3.1 (Patch)" -Color Cyan
 
 if (-not (Test-Admin)) {
@@ -449,14 +538,16 @@ if (-not (Test-Admin)) {
     exit
 }
 
-$Config = @{ npm = @(); winget = @() }
+$Config = @{ npm = @(); winget = @(); uv = @() }
 if (Test-Path $ConfigFile) {
     try {
         $Config = Get-Content $ConfigFile -Raw | ConvertFrom-Json
         if (-not $Config.npm) { $Config.npm = @() }
         if (-not $Config.winget) { $Config.winget = @() }
+        if (-not $Config.uv) { $Config.uv = @() }
         $Config.npm = @($Config.npm | ForEach-Object { ConvertTo-NpmName $_ } | Where-Object { $_ } | Sort-Object -Unique)
-        Write-Log "Configuración cargada: $($Config.npm.Count) agentes NPM, $($Config.winget.Count) agentes Winget." -Color Gray
+        $Config.uv = @($Config.uv | ForEach-Object { "$($_)".Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+        Write-Log "Configuración cargada: $($Config.npm.Count) agentes NPM, $($Config.winget.Count) agentes Winget, $($Config.uv.Count) herramientas UV." -Color Gray
     } catch {
         Write-Log "Error al leer $($ConfigFile): $_" -Color Red -Level ERROR
         Write-Warning "Continuando con lista blanca vacía. Solo se ejecutará modo descubrimiento."
@@ -614,7 +705,7 @@ if ($BackupSecrets) {
     }
 }
 
-if ($Config.npm.Count -eq 0 -and $Config.winget.Count -eq 0) {
+if ($Config.npm.Count -eq 0 -and $Config.winget.Count -eq 0 -and $Config.uv.Count -eq 0) {
     Write-Log 'Lista blanca vacía. No hay agentes para actualizar.' -Color Yellow -Level WARN
     Write-Log 'Usa -Discover para encontrar agentes instalados o edita agents.allowlist.json' -Color Gray
     exit 0
@@ -685,6 +776,78 @@ if ($Config.npm.Count -gt 0) {
         } catch {
             Write-Log "Error procesando $($AgentName): $_" -Color Red -Level ERROR
             $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -Notes @("Excepción no controlada: $_")
+        }
+    }
+}
+
+if ($Config.uv.Count -gt 0) {
+    Write-Log "Procesando $($Config.uv.Count) herramienta(s) UV..." -Color Cyan
+    foreach ($ToolName in $Config.uv) {
+        try {
+            $installedInfo = Get-UvInstalledToolInfo -Name $ToolName
+            if (-not $installedInfo.querySucceeded) {
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'failed' -Notes $installedInfo.notes
+                Write-Log "No se pudo consultar uv tool list para $($ToolName)." -Color Red -Level ERROR
+                continue
+            }
+
+            if (-not $installedInfo.installed) {
+                Write-Log "Saltando $ToolName (No instalado)" -Color Gray
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'not-installed' -Notes @('La herramienta no está instalada en uv tool.')
+                continue
+            }
+
+            $latestInfo = Get-PypiLatestVersion -Name $ToolName
+            if (-not $latestInfo.querySucceeded) {
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -Notes $latestInfo.notes
+                Write-Log "No se pudo determinar la versión más reciente en PyPI para $($ToolName)." -Color Yellow -Level WARN
+                continue
+            }
+
+            $installedVersionNormalized = Normalize-VersionToken -Version $installedInfo.installedVersion
+            $latestVersionNormalized = Normalize-VersionToken -Version $latestInfo.version
+
+            if ($installedVersionNormalized -eq $latestVersionNormalized) {
+                Write-Log "$ToolName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
+                continue
+            }
+
+            if ($PSCmdlet.ShouldProcess($ToolName, 'Actualizar UV Tool')) {
+                Write-Log "Actualizando $ToolName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
+                $uvOutput = @(uv tool upgrade $ToolName 2>&1)
+                $uvExitCode = $LASTEXITCODE
+                Write-CommandOutput -Prefix 'UV: ' -Lines $uvOutput
+
+                if ($uvExitCode -ne 0) {
+                    $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @("uv tool upgrade falló con exit=$uvExitCode.")
+                    Write-Log "Fallo al actualizar $ToolName (exit=$uvExitCode)." -Color Red -Level ERROR
+                    continue
+                }
+
+                $postInstallInfo = Get-UvInstalledToolInfo -Name $ToolName
+                if (-not $postInstallInfo.querySucceeded -or -not $postInstallInfo.installed) {
+                    $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -Notes @('La actualización terminó, pero no se pudo verificar la versión final con uv tool list.')
+                    Write-Log "No se pudo verificar la versión final de $ToolName tras la actualización." -Color Yellow -Level WARN
+                    continue
+                }
+
+                $postInstallVersionNormalized = Normalize-VersionToken -Version $postInstallInfo.installedVersion
+
+                if ($postInstallVersionNormalized -eq $latestVersionNormalized) {
+                    $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'updated' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $postInstallInfo.installedVersion -Changed ($postInstallInfo.installedVersion -ne $installedInfo.installedVersion)
+                    continue
+                }
+
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $postInstallInfo.installedVersion -Notes @('La versión final no coincide con la versión objetivo detectada en PyPI.')
+                Write-Log "Resultado incierto al verificar la versión final de $ToolName." -Color Yellow -Level WARN
+                continue
+            }
+
+            $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'would-update' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('Actualización omitida por -WhatIf.')
+        } catch {
+            Write-Log "Error procesando $($ToolName): $_" -Color Red -Level ERROR
+            $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'failed' -Notes @("Excepción no controlada: $_")
         }
     }
 }
