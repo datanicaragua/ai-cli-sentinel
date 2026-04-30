@@ -22,13 +22,14 @@ Si usas herramientas de inteligencia artificial en tu terminal (como **Gemini**,
 
 AI-CLI-Sentinel gestiona de forma segura los siguientes agentes de IA:
 
-| Agente | Desarrollador | Propósito |
-| --- | --- | --- |
-| **Gemini CLI** | Google | Asistente multimodal y generación de código. |
-| **Claude Code** | Anthropic | Programación en pareja (Pair programming) avanzada. |
-| **Codex CLI** | OpenAI | Generación de comandos y lógica de programación. |
-| **Qwen Code** | Alibaba | Modelos de lenguaje especializados en código. |
-| **GitHub Copilot CLI** | GitHub | Asistencia de IA para comandos y flujos en terminal. |
+| Agente | Desarrollador | Gestor | Propósito |
+| --- | --- | --- | --- |
+| **Gemini CLI** | Google | npm | Asistente multimodal y generación de código. |
+| **Claude Code** | Anthropic | npm | Programación en pareja (Pair programming) avanzada. |
+| **Codex CLI** | OpenAI | npm | Generación de comandos y lógica de programación. |
+| **Qwen Code** | Alibaba | npm | Modelos de lenguaje especializados en código. |
+| **GitHub Copilot CLI** | GitHub | npm | Asistencia de IA para comandos y flujos en terminal. |
+| **Aider** | Aider | uv tool | Asistente para desarrollo de código asistido por IA en terminal. |
 
 > **Nota:** Puedes agregar más agentes editando el archivo `src/agents.allowlist.json`. Solo se actualizarán los agentes que estén explícitamente en tu lista blanca.
 
@@ -48,6 +49,7 @@ AI-CLI-Sentinel gestiona de forma segura los siguientes agentes de IA:
 - **Privilegios de Administrador** (requeridos para VSS y actualizaciones globales)
 - Node.js y npm instalados (para gestión de paquetes NPM)
 - Winget instalado (para gestión de aplicaciones Windows)
+- UV instalado (para gestión de herramientas Python tipo `uv tool`, como `aider-chat`)
 
 ## 🔧 Instalación
 
@@ -70,7 +72,7 @@ Get-ChildItem -Recurse
    ```
 
 2. **Personalizar lista de permitidos:**
-   Edita `src\agents.allowlist.json` para agregar tus agentes permitidos en los arrays `npm` y `winget`.
+   Edita `src\agents.allowlist.json` para agregar tus agentes permitidos en los arrays `npm`, `winget` y `uv`.
 
 3. **Verificar permisos:**
    ```powershell

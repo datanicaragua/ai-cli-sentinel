@@ -25,8 +25,10 @@ Describe "AI-CLI-Sentinel Tests" {
                 $config = Get-Content $TestConfigPath -Raw | ConvertFrom-Json
                 ($config.PSObject.Properties.Name -contains "npm") | Should -Be $true
                 ($config.PSObject.Properties.Name -contains "winget") | Should -Be $true
+                ($config.PSObject.Properties.Name -contains "uv") | Should -Be $true
                 ($config.npm -is [System.Array]) | Should -Be $true
                 ($config.winget -is [System.Array]) | Should -Be $true
+                ($config.uv -is [System.Array]) | Should -Be $true
             }
         }
     }
@@ -93,6 +95,13 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match 'patternWithoutAvailable'
         }
 
+        It "Debe definir helper de versionado para UV" {
+            $ScriptContent | Should -Match 'function Get-UvInstalledToolInfo'
+            $ScriptContent | Should -Match 'uv tool list'
+            $ScriptContent | Should -Match 'function Get-PypiLatestVersion'
+            $ScriptContent | Should -Match 'https://pypi.org/pypi/'
+        }
+
         It "Debe definir resultados estructurados y reporte JSON" {
             $ScriptContent | Should -Match 'function New-OperationResult'
             $ScriptContent | Should -Match 'function Write-RunReport'
@@ -106,6 +115,7 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match 'already-current'
             $ScriptContent | Should -Match 'not-installed'
             $ScriptContent | Should -Match 'unknown'
+            $ScriptContent | Should -Match "Manager 'uv'"
         }
         
         It "Debe usar --ignore-scripts en instalaciones NPM" {

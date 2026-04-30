@@ -9,5 +9,8 @@
   ],
   "winget": [
     "GitHub.cli"
+  ],
+  "uv": [
+    "aider-chat"
   ]
 }

@@ -15,6 +15,7 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
 - **Git** instalado
 - **Node.js y npm** (para pruebas con agentes NPM)
 - **Winget** (para pruebas con aplicaciones Windows)
+- **UV** (para pruebas con herramientas Python gestionadas como `uv tool`)
 
 ### Configuración Inicial
 
@@ -118,6 +119,9 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
 
    # Flujo real con reporte estructurado
    .\src\AI-CLI-Sentinel.ps1 -BackupSecrets -ReportPath "C:\Logs\sentinel-report.json"
+
+   # Verificar herramientas UV instaladas (ej. aider-chat)
+   uv tool list
    ```
 
    Si el cambio toca lógica de actualización, valida también que el resumen final distinga correctamente entre `updated`, `would-update`, `already-current`, `not-installed`, `failed` y `unknown`.
