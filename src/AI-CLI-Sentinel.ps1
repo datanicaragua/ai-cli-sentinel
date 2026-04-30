@@ -472,22 +472,14 @@ function Get-UvInstalledToolInfo {
             }
         }
 
-        if ($row -match "^$escapedName\s+v(?<version>\S+)") {
-            return [pscustomobject]@{
-                querySucceeded = $true
-                installed = $true
-                installedVersion = $Matches.version
-                availableVersion = $null
-                notes = @()
-            }
-        }
-
+        # El filtro previo ya garantiza la captura de version con este formato.
+        $installedVersion = ($row -replace "^$escapedName\s+v", '').Trim()
         return [pscustomobject]@{
             querySucceeded = $true
             installed = $true
-            installedVersion = $null
+            installedVersion = $installedVersion
             availableVersion = $null
-            notes = @('No se pudo parsear la versión instalada en uv tool list.') + @($lines)
+            notes = @()
         }
     } catch {
         return [pscustomobject]@{
@@ -498,6 +490,16 @@ function Get-UvInstalledToolInfo {
             notes = @("No se pudo consultar uv tool list: $_")
         }
     }
+}
+
+function Normalize-VersionToken {
+    param([string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return $null
+    }
+
+    return $Version.Trim().TrimStart('v', 'V')
 }
 
 function Get-PypiLatestVersion {
@@ -802,7 +804,10 @@ if ($Config.uv.Count -gt 0) {
                 continue
             }
 
-            if ($installedInfo.installedVersion -eq $latestInfo.version) {
+            $installedVersionNormalized = Normalize-VersionToken -Version $installedInfo.installedVersion
+            $latestVersionNormalized = Normalize-VersionToken -Version $latestInfo.version
+
+            if ($installedVersionNormalized -eq $latestVersionNormalized) {
                 Write-Log "$ToolName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
                 $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
                 continue
@@ -827,7 +832,9 @@ if ($Config.uv.Count -gt 0) {
                     continue
                 }
 
-                if ($postInstallInfo.installedVersion -eq $latestInfo.version) {
+                $postInstallVersionNormalized = Normalize-VersionToken -Version $postInstallInfo.installedVersion
+
+                if ($postInstallVersionNormalized -eq $latestVersionNormalized) {
                     $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'updated' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $postInstallInfo.installedVersion -Changed ($postInstallInfo.installedVersion -ne $installedInfo.installedVersion)
                     continue
                 }

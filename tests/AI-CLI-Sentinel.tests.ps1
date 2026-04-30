@@ -100,6 +100,8 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match 'uv tool list'
             $ScriptContent | Should -Match 'function Get-PypiLatestVersion'
             $ScriptContent | Should -Match 'https://pypi.org/pypi/'
+            $ScriptContent | Should -Match 'function Normalize-VersionToken'
+            $ScriptContent | Should -Match 'TrimStart\(''v'', ''V''\)'
         }
 
         It "Debe definir resultados estructurados y reporte JSON" {
