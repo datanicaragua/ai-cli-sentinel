@@ -137,6 +137,23 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match "--ignore-scripts"
         }
 
+        It "Debe instalar NPM con versión exacta y no con @latest" {
+            $ScriptContent | Should -Match 'function Test-VersionToken'
+            $ScriptContent | Should -Match '\$npmPinnedPackage = "\$AgentName@\$'
+            $ScriptContent | Should -Match 'npm install -g \$npmPinnedPackage --ignore-scripts'
+            $ScriptContent | Should -Not -Match '@latest'
+        }
+
+        It "Debe actualizar UV con requirement exacto y no con upgrade flotante" {
+            $ScriptContent | Should -Match '\$uvPinnedRequirement = "\$ToolName==\$latestVersionNormalized"'
+            $ScriptContent | Should -Match 'uv tool install --force \$uvPinnedRequirement'
+            $ScriptContent | Should -Not -Match 'uv tool upgrade \$ToolName'
+        }
+
+        It "Debe actualizar Winget con versión exacta" {
+            $ScriptContent | Should -Match 'winget upgrade --id \$AppId --exact --version \$installedInfo\.availableVersion'
+        }
+
         It "No debe escribir el archivo de log durante -WhatIf" {
             $ScriptContent | Should -Match 'if \(\$WhatIfPreference\)'
         }

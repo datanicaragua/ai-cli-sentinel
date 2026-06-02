@@ -120,6 +120,16 @@ function Test-NpmPackageName {
     return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
 }
 
+function Test-VersionToken {
+    param([string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return $false
+    }
+
+    return ($Version -match '^[0-9A-Za-z][0-9A-Za-z._+\-:]*$')
+}
+
 function Resolve-AbsolutePath {
     param([string]$Path)
 
@@ -829,6 +839,12 @@ if ($Config.npm.Count -gt 0) {
                 continue
             }
 
+            if (-not (Test-VersionToken -Version $latestInfo.version)) {
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por npm no es segura para pinning exacto: $($latestInfo.version)")
+                Write-Log "Versión NPM inválida para pinning exacto de $($AgentName): $($latestInfo.version)" -Color Red -Level ERROR
+                continue
+            }
+
             if ($installedInfo.installedVersion -eq $latestInfo.version) {
                 Write-Log "$AgentName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
                 $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
@@ -837,7 +853,8 @@ if ($Config.npm.Count -gt 0) {
 
             if ($PSCmdlet.ShouldProcess($AgentName, 'Actualizar NPM (Aislado)')) {
                 Write-Log "Actualizando $AgentName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
-                $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
+                $npmPinnedPackage = "$AgentName@$($latestInfo.version)"
+                $npmOutput = @(npm install -g $npmPinnedPackage --ignore-scripts 2>&1)
                 $npmExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'NPM: ' -Lines $npmOutput
 
@@ -899,6 +916,12 @@ if ($Config.uv.Count -gt 0) {
             $installedVersionNormalized = Normalize-VersionToken -Version $installedInfo.installedVersion
             $latestVersionNormalized = Normalize-VersionToken -Version $latestInfo.version
 
+            if (-not (Test-VersionToken -Version $latestVersionNormalized)) {
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por PyPI no es segura para pinning exacto: $($latestInfo.version)")
+                Write-Log "Versión PyPI inválida para pinning exacto de $($ToolName): $($latestInfo.version)" -Color Red -Level ERROR
+                continue
+            }
+
             if ($installedVersionNormalized -eq $latestVersionNormalized) {
                 Write-Log "$ToolName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
                 $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
@@ -907,7 +930,8 @@ if ($Config.uv.Count -gt 0) {
 
             if ($PSCmdlet.ShouldProcess($ToolName, 'Actualizar UV Tool')) {
                 Write-Log "Actualizando $ToolName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
-                $uvOutput = @(uv tool upgrade $ToolName 2>&1)
+                $uvPinnedRequirement = "$ToolName==$latestVersionNormalized"
+                $uvOutput = @(uv tool install --force $uvPinnedRequirement 2>&1)
                 $uvExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'UV: ' -Lines $uvOutput
 
@@ -979,9 +1003,15 @@ if ($Config.winget.Count -gt 0) {
                 continue
             }
 
+            if (-not (Test-VersionToken -Version $installedInfo.availableVersion)) {
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por winget no es segura para pinning exacto: $($installedInfo.availableVersion)")
+                Write-Log "Versión Winget inválida para pinning exacto de $($AppId): $($installedInfo.availableVersion)" -Color Yellow -Level WARN
+                continue
+            }
+
             if ($PSCmdlet.ShouldProcess($AppId, 'Actualizar Winget')) {
                 Write-Log "Actualizando $AppId de $($installedInfo.installedVersion) a $($installedInfo.availableVersion)..." -Color Cyan
-                $wingetOutput = @(winget upgrade --id $AppId --exact --silent --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1)
+                $wingetOutput = @(winget upgrade --id $AppId --exact --version $installedInfo.availableVersion --silent --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1)
                 $wingetExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'Winget: ' -Lines $wingetOutput
 
