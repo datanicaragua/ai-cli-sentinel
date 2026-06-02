@@ -7,7 +7,9 @@
     Implementa mitigaciones de seguridad como --ignore-scripts y puntos de restauración VSS.
 
 .PARAMETER ConfigFile
-    Ruta al archivo JSON con la lista blanca de agentes.
+    Ruta al archivo JSON con la lista blanca de agentes. Si se omite, se prioriza
+    la política protegida en ProgramData y luego se usa el valor del repositorio
+    solo como fallback.
 
 .PARAMETER Discover
     Modo de auditoría. Busca posibles agentes de IA instalados que NO están en la lista blanca.
@@ -24,6 +26,9 @@
 
 .PARAMETER BackupSecrets
     Realiza una copia de seguridad de .ssh y .config antes de operar.
+
+.PARAMETER BackupPath
+    Ruta explicita para respaldos de secretos. Requerida cuando se usa -BackupSecrets.
 
 .PARAMETER ReportPath
     Ruta al archivo JSON estructurado con el resultado de la ejecución.
@@ -45,9 +50,10 @@
 #>
 [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact="Medium")]
 param (
-    [string]$ConfigFile = "$PSScriptRoot\agents.allowlist.json",
+    [string]$ConfigFile,
     [switch]$Discover,
     [switch]$BackupSecrets,
+    [string]$BackupPath,
     [string]$LogPath = "$HOME\Desktop\AI_Sentinel_Log.txt",
     [string]$CandidatesFile = "$PSScriptRoot\agents.candidates.json",
     [switch]$ApproveCandidates,
@@ -114,6 +120,206 @@ function Test-NpmPackageName {
     }
 
     return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
+}
+
+function Test-VersionToken {
+    param([string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return $false
+    }
+
+    return ($Version -match '^[0-9A-Za-z][0-9A-Za-z._+\-:]*$')
+}
+
+function Resolve-AbsolutePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    $PathToValidate = $Path
+    if ($Path.Length -ge 2 -and $Path[1] -eq ':') {
+        $PathToValidate = $Path.Substring(2)
+    }
+
+    if ($PathToValidate -match '[<>:"|?*]') {
+        return $null
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+    } catch {
+        return $null
+    }
+}
+
+function Test-PathInside {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Root
+    )
+
+    $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    $normalizedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $normalizedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    return ($normalizedPath.Equals($normalizedRoot, $comparison) -or $normalizedPath.StartsWith("$normalizedRoot\", $comparison))
+}
+
+function Get-CloudSyncRoots {
+    $roots = @()
+    $knownNames = @('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')
+    foreach ($name in $knownNames) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'User')
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $roots += $value
+        }
+    }
+
+    $userProfile = [Environment]::GetFolderPath('UserProfile')
+    if (-not [string]::IsNullOrWhiteSpace($userProfile)) {
+        $roots += (Join-Path $userProfile 'OneDrive')
+        $roots += (Join-Path $userProfile 'OneDrive - *')
+    }
+
+    return @($roots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+}
+
+function Test-UnsafeBackupPath {
+    param([string]$Path)
+
+    $resolved = Resolve-AbsolutePath -Path $Path
+    if (-not $resolved) {
+        return $true
+    }
+
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not [string]::IsNullOrWhiteSpace($desktop) -and (Test-PathInside -Path $resolved -Root $desktop)) {
+        return $true
+    }
+
+    foreach ($root in (Get-CloudSyncRoots)) {
+        if ($root.Contains('*')) {
+            $parent = Split-Path $root -Parent
+            $leaf = Split-Path $root -Leaf
+            foreach ($match in (Get-ChildItem -Path $parent -Directory -Filter $leaf -ErrorAction SilentlyContinue)) {
+                if (Test-PathInside -Path $resolved -Root $match.FullName) {
+                    return $true
+                }
+            }
+            continue
+        }
+
+        if (Test-PathInside -Path $resolved -Root $root) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-SecurePolicyPath {
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ([string]::IsNullOrWhiteSpace($programData)) {
+        $programData = $env:ProgramData
+    }
+
+    if ([string]::IsNullOrWhiteSpace($programData)) {
+        return $null
+    }
+
+    return (Join-Path $programData 'AI-CLI-Sentinel\policy\agents.allowlist.json')
+}
+
+function Get-RepositoryAllowlistPath {
+    return (Join-Path $PSScriptRoot 'agents.allowlist.json')
+}
+
+function Resolve-ConfigFilePath {
+    param([string]$RequestedConfigFile)
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedConfigFile)) {
+        return [pscustomobject]@{
+            path = $RequestedConfigFile
+            source = 'explicit'
+            warning = $null
+        }
+    }
+
+    $securePolicyPath = Get-SecurePolicyPath
+    if (-not [string]::IsNullOrWhiteSpace($securePolicyPath) -and (Test-Path $securePolicyPath)) {
+        return [pscustomobject]@{
+            path = $securePolicyPath
+            source = 'secure-policy'
+            warning = $null
+        }
+    }
+
+    return [pscustomobject]@{
+        path = Get-RepositoryAllowlistPath
+        source = 'repository-fallback'
+        warning = "ADVERTENCIA: no se encontró la raíz de confianza protegida en $securePolicyPath. Usando allowlist del repositorio solo como fallback. Migra la política aprobada a ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json con ACL de administradores."
+    }
+}
+
+function Invoke-SecretBackup {
+    param([string]$BackupPath)
+
+    if ([string]::IsNullOrWhiteSpace($BackupPath)) {
+        Write-Log 'BackupSecrets requiere -BackupPath. No se permite respaldar secretos en una ruta predeterminada.' -Color Red -Level ERROR
+        return $false
+    }
+
+    $BackupRoot = Resolve-AbsolutePath -Path $BackupPath
+    if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
+        Write-Log "No se pudo resolver la ruta de respaldo: $BackupPath" -Color Red -Level ERROR
+        return $false
+    }
+
+    if (Test-UnsafeBackupPath -Path $BackupPath) {
+        Write-Log "Ruta de respaldo rechazada por posible sincronización en nube o Desktop: $BackupPath" -Color Red -Level ERROR
+        Write-Log 'Elige una ruta local protegida por ACL fuera de Desktop/OneDrive, por ejemplo un volumen cifrado administrado.' -Color Yellow -Level WARN
+        return $false
+    }
+
+    $BackupDir = Join-Path $BackupRoot "AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
+    $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
+    $SuccessfulBackups = 0
+
+    try {
+        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    } catch {
+        Write-Log "No se pudo crear el directorio de respaldo ${BackupDir}: $($_.Exception.Message)" -Color Red -Level ERROR
+        return $false
+    }
+
+    foreach ($p in $Paths) {
+        if (-not (Test-Path $p)) {
+            continue
+        }
+
+        try {
+            Copy-Item $p $BackupDir -Recurse -Force -ErrorAction Stop
+            $SuccessfulBackups++
+        } catch [System.IO.IOException] {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir' por un error de I/O: $($_.Exception.Message)" -Color Yellow -Level WARN
+        } catch [System.UnauthorizedAccessException] {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir' por permisos insuficientes: $($_.Exception.Message)" -Color Yellow -Level WARN
+        } catch {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir': $($_.Exception.Message)" -Color Yellow -Level WARN
+        }
+    }
+
+    if ($SuccessfulBackups -gt 0) {
+        Write-Log "Secretos respaldados en $BackupDir" -Color Green
+        return $true
+    }
+
+    Write-Log "No se pudo respaldar ningun secreto en $BackupDir." -Color Yellow -Level WARN
+    return $false
 }
 
 function Get-MeaningfulCommandLines {
@@ -538,6 +744,16 @@ if (-not (Test-Admin)) {
     exit
 }
 
+$ConfigResolution = Resolve-ConfigFilePath -RequestedConfigFile $ConfigFile
+$ConfigFile = $ConfigResolution.path
+if ($ConfigResolution.source -eq 'secure-policy') {
+    Write-Log "Usando raíz de confianza protegida: $ConfigFile" -Color Green
+} elseif ($ConfigResolution.source -eq 'repository-fallback') {
+    Write-Log $ConfigResolution.warning -Color Yellow -Level WARN
+} else {
+    Write-Log "Usando ConfigFile explícito: $ConfigFile" -Color Yellow -Level WARN
+}
+
 $Config = @{ npm = @(); winget = @(); uv = @() }
 if (Test-Path $ConfigFile) {
     try {
@@ -693,15 +909,9 @@ if ($PSCmdlet.ShouldProcess('Sistema Operativo', 'Crear Punto de Restauración (
 
 if ($BackupSecrets) {
     if ($PSCmdlet.ShouldProcess('Archivos de Usuario', 'Respaldar Secretos (.ssh, .config)')) {
-        $BackupDir = "$HOME\Desktop\AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
-        $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
-        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
-        foreach ($p in $Paths) {
-            if (Test-Path $p) {
-                Copy-Item $p $BackupDir -Recurse -Force -ErrorAction SilentlyContinue
-            }
+        if (-not (Invoke-SecretBackup -BackupPath $BackupPath)) {
+            exit 1
         }
-        Write-Log "Secretos respaldados en $BackupDir" -Color Green
     }
 }
 
@@ -737,6 +947,12 @@ if ($Config.npm.Count -gt 0) {
                 continue
             }
 
+            if (-not (Test-VersionToken -Version $latestInfo.version)) {
+                $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por npm no es segura para pinning exacto: $($latestInfo.version)")
+                Write-Log "Versión NPM inválida para pinning exacto de $($AgentName): $($latestInfo.version)" -Color Red -Level ERROR
+                continue
+            }
+
             if ($installedInfo.installedVersion -eq $latestInfo.version) {
                 Write-Log "$AgentName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
                 $OperationResults += New-OperationResult -Name $AgentName -Manager 'npm' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
@@ -745,7 +961,8 @@ if ($Config.npm.Count -gt 0) {
 
             if ($PSCmdlet.ShouldProcess($AgentName, 'Actualizar NPM (Aislado)')) {
                 Write-Log "Actualizando $AgentName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
-                $npmOutput = @(npm install -g "$AgentName@latest" --ignore-scripts 2>&1)
+                $npmPinnedPackage = "$AgentName@$($latestInfo.version)"
+                $npmOutput = @(npm install -g $npmPinnedPackage --ignore-scripts 2>&1)
                 $npmExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'NPM: ' -Lines $npmOutput
 
@@ -807,6 +1024,12 @@ if ($Config.uv.Count -gt 0) {
             $installedVersionNormalized = Normalize-VersionToken -Version $installedInfo.installedVersion
             $latestVersionNormalized = Normalize-VersionToken -Version $latestInfo.version
 
+            if (-not (Test-VersionToken -Version $latestVersionNormalized)) {
+                $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'failed' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por PyPI no es segura para pinning exacto: $($latestInfo.version)")
+                Write-Log "Versión PyPI inválida para pinning exacto de $($ToolName): $($latestInfo.version)" -Color Red -Level ERROR
+                continue
+            }
+
             if ($installedVersionNormalized -eq $latestVersionNormalized) {
                 Write-Log "$ToolName ya está en la versión más reciente ($($installedInfo.installedVersion))." -Color Gray
                 $OperationResults += New-OperationResult -Name $ToolName -Manager 'uv' -Status 'already-current' -InstalledVersionBefore $installedInfo.installedVersion -AvailableVersionBefore $latestInfo.version -InstalledVersionAfter $installedInfo.installedVersion -Notes @('No se requiere actualización.')
@@ -815,7 +1038,8 @@ if ($Config.uv.Count -gt 0) {
 
             if ($PSCmdlet.ShouldProcess($ToolName, 'Actualizar UV Tool')) {
                 Write-Log "Actualizando $ToolName de $($installedInfo.installedVersion) a $($latestInfo.version)..." -Color Cyan
-                $uvOutput = @(uv tool upgrade $ToolName 2>&1)
+                $uvPinnedRequirement = "$ToolName==$latestVersionNormalized"
+                $uvOutput = @(uv tool install --force $uvPinnedRequirement 2>&1)
                 $uvExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'UV: ' -Lines $uvOutput
 
@@ -887,9 +1111,15 @@ if ($Config.winget.Count -gt 0) {
                 continue
             }
 
+            if (-not (Test-VersionToken -Version $installedInfo.availableVersion)) {
+                $OperationResults += New-OperationResult -Name $AppId -Manager 'winget' -Status 'unknown' -InstalledVersionBefore $installedInfo.installedVersion -Notes @("La versión reportada por winget no es segura para pinning exacto: $($installedInfo.availableVersion)")
+                Write-Log "Versión Winget inválida para pinning exacto de $($AppId): $($installedInfo.availableVersion)" -Color Yellow -Level WARN
+                continue
+            }
+
             if ($PSCmdlet.ShouldProcess($AppId, 'Actualizar Winget')) {
                 Write-Log "Actualizando $AppId de $($installedInfo.installedVersion) a $($installedInfo.availableVersion)..." -Color Cyan
-                $wingetOutput = @(winget upgrade --id $AppId --exact --silent --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1)
+                $wingetOutput = @(winget upgrade --id $AppId --exact --version $installedInfo.availableVersion --silent --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1)
                 $wingetExitCode = $LASTEXITCODE
                 Write-CommandOutput -Prefix 'Winget: ' -Lines $wingetOutput
 

@@ -58,6 +58,10 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match '\[switch\]\$BackupSecrets'
         }
 
+        It "Debe tener parámetro BackupPath para respaldos explícitos" {
+            $ScriptContent | Should -Match '\[string\]\$BackupPath'
+        }
+
         It "Debe tener parámetro ReportPath" {
             $ScriptContent | Should -Match '\[string\]\$ReportPath'
         }
@@ -68,6 +72,16 @@ Describe "AI-CLI-Sentinel Tests" {
         
         It "Debe tener parámetro ConfigFile" {
             $ScriptContent | Should -Match '\[string\]\$ConfigFile'
+        }
+
+        It "Debe resolver la allowlist desde ProgramData antes del fallback del repositorio" {
+            $ScriptContent | Should -Match 'function Get-SecurePolicyPath'
+            $ScriptContent | Should -Match "GetFolderPath\('CommonApplicationData'\)"
+            $ScriptContent | Should -Match 'AI-CLI-Sentinel\\policy\\agents.allowlist.json'
+            $ScriptContent | Should -Match 'function Resolve-ConfigFilePath'
+            $ScriptContent | Should -Match 'repository-fallback'
+            $ScriptContent | Should -Match 'raíz de confianza protegida'
+            $ScriptContent | Should -Not -Match '\[string\]\$ConfigFile = "\$PSScriptRoot\\agents\.allowlist\.json"'
         }
         
         It "Debe implementar modo Discover" {
@@ -80,6 +94,22 @@ Describe "AI-CLI-Sentinel Tests" {
         
         It "Debe implementar respaldo de secretos" {
             $ScriptContent | Should -Match "BackupSecrets"
+        }
+
+        It "Debe encapsular la lógica de respaldo en un helper reutilizable" {
+            $ScriptContent | Should -Match 'function Invoke-SecretBackup'
+            $ScriptContent | Should -Match 'Invoke-SecretBackup -BackupPath \$BackupPath'
+        }
+
+        It "Debe exigir BackupPath y rechazar rutas Desktop o cloud-sync para secretos" {
+            $ScriptContent | Should -Match 'BackupSecrets requiere -BackupPath'
+            $ScriptContent | Should -Match 'function Test-UnsafeBackupPath'
+            $ScriptContent | Should -Match 'function Get-CloudSyncRoots'
+            $ScriptContent | Should -Match "GetFolderPath\('Desktop'\)"
+            $ScriptContent | Should -Not -Match '\$HOME\\Desktop\\AI_Backup_'
+            $ScriptContent | Should -Match 'try\s*\{[\s\S]*Copy-Item \$p \$BackupDir -Recurse -Force -ErrorAction Stop'
+            $ScriptContent | Should -Match 'catch \[System\.IO\.IOException\]'
+            $ScriptContent | Should -Match 'catch \[System\.UnauthorizedAccessException\]'
         }
 
         It "Debe definir helpers de versionado para NPM" {
@@ -124,6 +154,23 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match "--ignore-scripts"
         }
 
+        It "Debe instalar NPM con versión exacta y no con @latest" {
+            $ScriptContent | Should -Match 'function Test-VersionToken'
+            $ScriptContent | Should -Match '\$npmPinnedPackage = "\$AgentName@\$'
+            $ScriptContent | Should -Match 'npm install -g \$npmPinnedPackage --ignore-scripts'
+            $ScriptContent | Should -Not -Match '@latest'
+        }
+
+        It "Debe actualizar UV con requirement exacto y no con upgrade flotante" {
+            $ScriptContent | Should -Match '\$uvPinnedRequirement = "\$ToolName==\$latestVersionNormalized"'
+            $ScriptContent | Should -Match 'uv tool install --force \$uvPinnedRequirement'
+            $ScriptContent | Should -Not -Match 'uv tool upgrade \$ToolName'
+        }
+
+        It "Debe actualizar Winget con versión exacta" {
+            $ScriptContent | Should -Match 'winget upgrade --id \$AppId --exact --version \$installedInfo\.availableVersion'
+        }
+
         It "No debe escribir el archivo de log durante -WhatIf" {
             $ScriptContent | Should -Match 'if \(\$WhatIfPreference\)'
         }
@@ -150,6 +197,78 @@ Describe "AI-CLI-Sentinel Tests" {
                 [ref]$errors
             )
             $errors.Count | Should -Be 0
+        }
+    }
+
+    Context "Resiliencia de path y backup" {
+        BeforeAll {
+            $parserErrors = $null
+            $tokens = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$tokens, [ref]$parserErrors)
+            $functionDefinitions = $ast.EndBlock.Statements |
+                Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } |
+                ForEach-Object { $_.Extent.Text }
+            $script:InvokeSecretBackupDefinition = ($functionDefinitions | Where-Object { $_ -match '^function Invoke-SecretBackup' } | Select-Object -First 1)
+            $functionsOnlyPath = Join-Path ([System.IO.Path]::GetTempPath()) "AI-CLI-Sentinel.functions.$PID.ps1"
+            Set-Content -Path $functionsOnlyPath -Value ($functionDefinitions -join [Environment]::NewLine + [Environment]::NewLine) -Encoding UTF8
+            . $functionsOnlyPath
+        }
+
+        It "Debe devolver null cuando Resolve-AbsolutePath recibe una ruta malformada" {
+            Resolve-AbsolutePath -Path 'C:\invalid<path' | Should -BeNullOrEmpty
+        }
+
+        It "Debe continuar el respaldo aunque un archivo falle por I/O" {
+            $global:CapturedLogs = @()
+            $global:CopiedPaths = @()
+            $moduleName = "AI-CLI-Sentinel.BackupHarness.$PID"
+            $modulePath = Join-Path ([System.IO.Path]::GetTempPath()) "$moduleName.psm1"
+            $testBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'SecureBackups'
+            $escapedBackupRoot = $testBackupRoot.Replace("'", "''")
+            $moduleContent = @(
+                'function Write-Log {'
+                "    param([string]`$Message, [string]`$Color = 'White', [string]`$Level = 'INFO')"
+                '    $global:CapturedLogs += [pscustomobject]@{'
+                '        Message = $Message'
+                '        Color   = $Color'
+                '        Level   = $Level'
+                '    }'
+                '}'
+                'function Resolve-AbsolutePath {'
+                '    param([string]$Path)'
+                "    return '$escapedBackupRoot'"
+                '}'
+                'function Test-UnsafeBackupPath {'
+                '    param([string]$Path)'
+                '    return $false'
+                '}'
+                'function Test-Path {'
+                '    param([string]$Path)'
+                '    return $true'
+                '}'
+                'function New-Item {'
+                '    param($ItemType, $Path, [switch]$Force)'
+                '    return $null'
+                '}'
+                'function Copy-Item {'
+                '    param($Path, $Destination, [switch]$Recurse, [switch]$Force)'
+                '    $global:CopiedPaths += $Path'
+                "    if (`$Path -like '*\.ssh') {"
+                "        throw [System.IO.IOException]::new('locked')"
+                '    }'
+                '}'
+                $script:InvokeSecretBackupDefinition
+                'Export-ModuleMember -Function Invoke-SecretBackup'
+            ) -join [Environment]::NewLine
+            Set-Content -Path $modulePath -Value $moduleContent -Encoding UTF8
+            $module = Import-Module $modulePath -Force -PassThru
+            $backupCommand = $module.ExportedFunctions['Invoke-SecretBackup']
+            $result = & $backupCommand -BackupPath $testBackupRoot
+
+            $result | Should -Be $true
+            $global:CopiedPaths.Count | Should -Be 3
+            ($global:CapturedLogs.Message -join "`n") | Should -Match "No se pudo respaldar '.+\\.ssh'.+error de I/O"
+            ($global:CapturedLogs.Message -join "`n") | Should -Match 'Secretos respaldados en .+AI_Backup_'
         }
     }
 }

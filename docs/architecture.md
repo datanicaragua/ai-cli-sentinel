@@ -22,6 +22,11 @@ Archivo JSON que contiene:
 - Políticas de seguridad por defecto
 - Configuración de logging y monitoreo
 
+En operación elevada, la raíz de confianza preferida es
+`%ProgramData%\AI-CLI-Sentinel\policy\agents.allowlist.json`. El archivo
+`src\agents.allowlist.json` del repositorio se conserva como fallback de
+desarrollo y arranque inicial.
+
 ### 3. Sistema de Logging
 
 Todos los eventos son registrados en archivos de log con:

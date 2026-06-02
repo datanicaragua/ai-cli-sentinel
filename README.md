@@ -31,13 +31,13 @@ AI-CLI-Sentinel gestiona de forma segura los siguientes agentes de IA:
 | **GitHub Copilot CLI** | GitHub | npm | Asistencia de IA para comandos y flujos en terminal. |
 | **Aider** | Aider | uv tool | Asistente para desarrollo de código asistido por IA en terminal. |
 
-> **Nota:** Puedes agregar más agentes editando el archivo `src/agents.allowlist.json`. Solo se actualizarán los agentes que estén explícitamente en tu lista blanca.
+> **Nota:** En operación elevada, la lista blanca aprobada debe vivir en `%ProgramData%\AI-CLI-Sentinel\policy\agents.allowlist.json`. El archivo `src/agents.allowlist.json` queda como fallback del repositorio y activará una advertencia de seguridad.
 
 ## 🚀 Características
 
 - **Seguridad primero:** Solo actualiza agentes que tú explícitamente apruebas en tu lista blanca
 - **Protección automática:** Crea puntos de restauración antes de cualquier cambio
-- **Respaldo de secretos:** Guarda automáticamente tus llaves de acceso antes de actualizar
+- **Respaldo de secretos:** Guarda tus llaves de acceso solo en una ruta explícita y validada antes de actualizar
 - **Modo descubrimiento:** Encuentra agentes instalados que no están en tu lista blanca (sin hacer cambios)
 - **Prevención de malware:** Usa técnicas avanzadas para evitar la ejecución de código malicioso durante instalaciones
 - **Registro completo:** Mantiene un log detallado de todas las operaciones para tu revisión
@@ -66,19 +66,36 @@ Get-ChildItem -Recurse
 
 ### Configuración Inicial
 
-1. **Revisar configuración:**
+1. **Revisar configuración de fallback del repositorio:**
    ```powershell
    Get-Content src\agents.allowlist.json
    ```
 
-2. **Personalizar lista de permitidos:**
-   Edita `src\agents.allowlist.json` para agregar tus agentes permitidos en los arrays `npm`, `winget` y `uv`.
+2. **Instalar la raíz de confianza protegida:**
+   ```powershell
+   # Ejecutar como Administrador
+   New-Item -ItemType Directory -Path "$env:ProgramData\AI-CLI-Sentinel\policy" -Force
+   Copy-Item "src\agents.allowlist.json" "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" -Force
+   ```
 
-3. **Verificar permisos:**
+3. **Personalizar lista de permitidos:**
+   Edita `%ProgramData%\AI-CLI-Sentinel\policy\agents.allowlist.json` para agregar tus agentes permitidos en los arrays `npm`, `winget` y `uv`. Usar `src\agents.allowlist.json` directamente solo es un fallback para desarrollo o arranque inicial y emitirá una advertencia de seguridad durante la ejecución.
+
+4. **Verificar permisos:**
    ```powershell
    Get-ExecutionPolicy
    # Si es necesario: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
    ```
+
+### Política de Raíz de Confianza
+
+AI-CLI-Sentinel prioriza la allowlist protegida en:
+
+```powershell
+$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json
+```
+
+Esta ruta debe ser administrada con ACLs de administradores y tratada como política de seguridad. Si el archivo no existe, el script cae de forma controlada a `src\agents.allowlist.json`, pero lo reporta como fallback inseguro para recordar que el repositorio local no debe ser la raíz de confianza de una ejecución elevada.
 
 ## 📖 Uso
 
@@ -88,8 +105,10 @@ Actualiza solo los agentes en la lista blanca con respaldo de secretos:
 
 ```powershell
 # Ejecutar como Administrador
-.\src\AI-CLI-Sentinel.ps1 -BackupSecrets
+.\src\AI-CLI-Sentinel.ps1 -BackupSecrets -BackupPath "C:\SecureBackups"
 ```
+
+`-BackupSecrets` requiere `-BackupPath`. Las rutas bajo Desktop, OneDrive u otras carpetas conocidas de sincronización en nube se bloquean por defecto para reducir el riesgo de exfiltración de credenciales.
 
 Comportamiento funcional:
 - Primero compara la versión instalada contra la versión disponible.
@@ -151,7 +170,7 @@ Este modo **solo actualiza la allowlist**. Luego ejecuta el flujo estándar para
 - Si quieres ver qué haría el script sin tocar nada: `./src/AI-CLI-Sentinel.ps1 -WhatIf`
 - Si quieres detectar CLIs instalados fuera de tu allowlist: `./src/AI-CLI-Sentinel.ps1 -Discover`
 - Si quieres revisar y aprobar candidatos detectados: `./src/AI-CLI-Sentinel.ps1 -ApproveCandidates`
-- Si quieres ejecutar la actualización real con respaldo de secretos: `./src/AI-CLI-Sentinel.ps1 -BackupSecrets`
+- Si quieres ejecutar la actualización real con respaldo de secretos: `./src/AI-CLI-Sentinel.ps1 -BackupSecrets -BackupPath "C:\SecureBackups"`
 
 ## 📘 Guía Rápida para Usuarios No Técnicos
 
@@ -162,7 +181,7 @@ Imagina que tienes varios asistentes de IA instalados en tu computadora (como Ge
 1. **Verifica qué asistentes tienes instalados** (modo Discover)
 2. **Actualiza solo los que tú apruebas** (lista blanca)
 3. **Crea una copia de seguridad** antes de hacer cambios (punto de restauración)
-4. **Protege tus llaves de acceso** (respaldo de secretos)
+4. **Protege tus llaves de acceso** en una ruta local explícita y no sincronizada
 
 ### Línea de Tiempo del Proceso
 
@@ -177,7 +196,7 @@ Imagina que tienes varios asistentes de IA instalados en tu computadora (como Ge
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. Respaldo: Se guardan tus llaves de acceso (.ssh, .config)│
+│ 3. Respaldo: Se guardan tus llaves en BackupPath validado  │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -208,19 +227,19 @@ Esto te permite entender exactamente qué hará el script antes de ejecutarlo re
 ### Personalizar Archivo de Configuración
 
 ```powershell
-.\src\AI-CLI-Sentinel.ps1 -ConfigFile "ruta\personalizada\agents.allowlist.json" -BackupSecrets
+.\src\AI-CLI-Sentinel.ps1 -ConfigFile "ruta\personalizada\agents.allowlist.json" -BackupSecrets -BackupPath "C:\SecureBackups"
 ```
 
 ### Personalizar Ruta de Logs
 
 ```powershell
-.\src\AI-CLI-Sentinel.ps1 -LogPath "C:\Logs\sentinel.log" -BackupSecrets
+.\src\AI-CLI-Sentinel.ps1 -LogPath "C:\Logs\sentinel.log" -BackupSecrets -BackupPath "C:\SecureBackups"
 ```
 
 ### Personalizar Ruta del Reporte JSON
 
 ```powershell
-.\src\AI-CLI-Sentinel.ps1 -ReportPath "C:\Logs\sentinel-report.json" -BackupSecrets
+.\src\AI-CLI-Sentinel.ps1 -ReportPath "C:\Logs\sentinel-report.json" -BackupSecrets -BackupPath "C:\SecureBackups"
 ```
 
 Si la ruta indicada no es escribible y no usas `-NoReport`, el script terminará con error para evitar una ejecución sin evidencia estructurada.
@@ -228,7 +247,7 @@ Si la ruta indicada no es escribible y no usas `-NoReport`, el script terminará
 Para desactivar el reporte estructurado en una ejecución puntual:
 
 ```powershell
-.\src\AI-CLI-Sentinel.ps1 -NoReport -BackupSecrets
+.\src\AI-CLI-Sentinel.ps1 -NoReport -BackupSecrets -BackupPath "C:\SecureBackups"
 ```
 
 ## 📁 Estructura del Proyecto
@@ -244,7 +263,7 @@ ai-cli-sentinel/
 │       └── security_report.md
 ├── src/
 │   ├── AI-CLI-Sentinel.ps1       # Script principal
-│   └── agents.allowlist.json     # Configuración
+│   └── agents.allowlist.json     # Fallback de configuración
 ├── tests/
 │   └── AI-CLI-Sentinel.tests.ps1 # Pruebas unitarias
 ├── docs/
@@ -263,7 +282,7 @@ ai-cli-sentinel/
 flowchart TD
     A[Inicio: AI-CLI-Sentinel] --> B{¿Privilegios<br/>Admin?}
     B -->|No| C[Error: Se requieren privilegios]
-    B -->|Sí| D[Cargar agents.allowlist.json]
+    B -->|Sí| D[Cargar allowlist protegida]
     D --> E{¿Modo<br/>Discover?}
     E -->|Sí| F[Buscar agentes instalados]
     F --> G[Reportar candidatos]
@@ -273,7 +292,7 @@ flowchart TD
     J --> H
     I -->|No| K[Crear punto VSS]
     K --> L{¿Backup<br/>Secrets?}
-    L -->|Sí| M[Respaldar .ssh, .config, .npmrc]
+    L -->|Sí| M[Respaldar secretos en BackupPath]
     L -->|No| N[Actualizar agentes NPM]
     M --> N
     N --> O[Actualizar aplicaciones Winget]
@@ -297,11 +316,11 @@ Ejecutar tests desde terminal (runner robusto):
 ¿Cuándo correr tests?
 - Antes de abrir un Pull Request.
 - Después de cambios en `src/AI-CLI-Sentinel.ps1`.
-- Después de cambios en configuración o flujo de actualización (`src/agents.allowlist.json`, control de errores, logging).
+- Después de cambios en configuración o flujo de actualización (`src/agents.allowlist.json`, raíz de confianza protegida, control de errores, logging).
 - Después de atender comentarios de revisión o refactors en el script.
 
 ¿Para qué sirven estos tests?
-- Verifican que el script principal exista y mantenga parámetros esperados como `-Discover`, `-BackupSecrets` y `-ConfigFile`.
+- Verifican que el script principal exista y mantenga parámetros esperados como `-Discover`, `-BackupSecrets`, `-BackupPath` y `-ConfigFile`.
 - Validan que la configuración JSON tenga estructura correcta.
 - Detectan regresiones básicas en sintaxis PowerShell, decisiones de seguridad y el nuevo contrato de actualización por versión/reporte estructurado.
 

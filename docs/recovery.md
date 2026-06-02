@@ -10,9 +10,10 @@
 
 **Solución:**
 1. Restaurar desde backup (si existe)
-2. Si no hay backup, crear nuevo archivo desde plantilla:
+2. Si no hay backup, crear nuevo archivo desde el fallback del repositorio:
    ```powershell
-   Copy-Item "src\agents.allowlist.json.example" "src\agents.allowlist.json"
+   New-Item -ItemType Directory -Path "$env:ProgramData\AI-CLI-Sentinel\policy" -Force
+   Copy-Item "src\agents.allowlist.json" "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" -Force
    ```
 3. Reconfigurar agentes permitidos según necesidades
 
@@ -23,7 +24,7 @@
 - Errores de permisos en operaciones normales
 
 **Solución:**
-1. Editar `agents.allowlist.json` manualmente
+1. Editar `%ProgramData%\AI-CLI-Sentinel\policy\agents.allowlist.json` manualmente
 2. Agregar el agente a la lista de permitidos:
    ```json
    {
@@ -54,17 +55,17 @@
 **Procedimiento:**
 1. **Backup de configuración actual:**
    ```powershell
-   Copy-Item "src\agents.allowlist.json" "backup\agents.allowlist.json.$(Get-Date -Format 'yyyyMMdd')"
+   Copy-Item "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" "backup\agents.allowlist.json.$(Get-Date -Format 'yyyyMMdd')"
    ```
 
 2. **Restaurar desde backup:**
    ```powershell
-   Copy-Item "backup\agents.allowlist.json.YYYYMMDD" "src\agents.allowlist.json" -Force
+   Copy-Item "backup\agents.allowlist.json.YYYYMMDD" "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" -Force
    ```
 
 3. **Verificar integridad:**
    ```powershell
-   Get-Content "src\agents.allowlist.json" | ConvertFrom-Json
+   Get-Content "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" | ConvertFrom-Json
    ```
 
 4. **Reiniciar servicios**
@@ -80,7 +81,7 @@ Configurar tarea programada para backups diarios:
 $backupDir = "backup"
 $date = Get-Date -Format "yyyyMMdd"
 New-Item -ItemType Directory -Path $backupDir -Force
-Copy-Item "src\agents.allowlist.json" "$backupDir\agents.allowlist.json.$date"
+Copy-Item "$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json" "$backupDir\agents.allowlist.json.$date"
 ```
 
 ### Backup Manual
