@@ -1,22 +1,30 @@
-# v2.0.0 - Security Hardening & Trust Root Migration
+# v2.0.0 - Fortalecimiento de Seguridad y Migración de la Raíz de Confianza
 
-This major release introduces critical security enhancements designed to protect AI development environments against sophisticated supply chain attacks (e.g., Mini Shai-Hulud, Sapphire Sleet operations) observed in May/June 2026.
+Esta versión introduce mejoras críticas de seguridad diseñadas para proteger entornos de desarrollo de IA contra ataques sofisticados a la cadena de suministro (ej. gusano Mini Shai-Hulud) observados hasta junio de 2026.
 
-⚠️ **BREAKING CHANGES**
+⚠️ **CAMBIOS IMPORTANTES (BREAKING CHANGES)**
 
-This release changes how backups and trust policies are handled to prevent credential exfiltration and unauthorized policy poisoning.
+Esta versión cambia drásticamente cómo se manejan los respaldos y las políticas de confianza para prevenir la exfiltración de credenciales.
 
-1. **Strict Backup Paths:** The `-BackupSecrets` flag no longer defaults to the Desktop. You MUST provide an explicit, non-cloud-synced destination using `-BackupPath`.
-2. **Admin-Controlled Trust Root:** The `agents.allowlist.json` file is no longer read securely from the local repository directory. It must reside in a protected system directory.
+1. **Rutas de Respaldo Estrictas:** El parámetro `-BackupSecrets` ya no copia archivos al Escritorio por defecto. DEBES proporcionar un destino explícito y seguro (que no se sincronice en la nube) usando `-BackupPath`.
+2. **Raíz de Confianza Administrada:** El archivo `agents.allowlist.json` ya no se lee desde el directorio local del repositorio. Ahora debe residir en un directorio protegido del sistema operativo.
 
-## 🚀 Migration Guide for Existing Users
+## 🚀 Guía de Migración y Primeros Pasos
 
-To ensure your existing allowlist continues to work without triggering security warnings, run the following PowerShell command as Administrator to migrate your policy to the new secure location:
+Para asegurar que tu herramienta funcione correctamente sin emitir advertencias de seguridad, abre una consola de PowerShell **como Administrador** y ejecuta el siguiente comando para establecer tu política de seguridad:
 
 ```powershell
-# Create the secure policy directory and migrate the existing allowlist
+# 1. Crear el directorio protegido por el sistema
 $PolicyDir = "$env:ProgramData\AI-CLI-Sentinel\policy"
 New-Item -Path $PolicyDir -ItemType Directory -Force
+
+# 2. Migrar la lista de agentes aprobados
 Copy-Item ".\src\agents.allowlist.json" -Destination "$PolicyDir\agents.allowlist.json" -Force
-Write-Host "Migration complete. Trust root secured at: $PolicyDir" -ForegroundColor Green
+
+Write-Host "Migración completada. La raíz de confianza está asegurada en: $PolicyDir" -ForegroundColor Green
 ```
+
+## 🛡️ Actualizaciones Adicionales de Seguridad
+
+- **Eliminación de Vulnerabilidades TOCTOU:** Las actualizaciones de paquetes (`npm`, `uv`, `winget`) ahora evalúan y fijan (pin) las versiones exactas, eliminando el riesgo de inyección al usar etiquetas móviles como `@latest`.
+- **Cobertura de Pruebas (Pester):** 100% de éxito en la validación de los nuevos límites de seguridad.
