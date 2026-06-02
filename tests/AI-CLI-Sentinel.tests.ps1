@@ -223,6 +223,8 @@ Describe "AI-CLI-Sentinel Tests" {
             $global:CopiedPaths = @()
             $moduleName = "AI-CLI-Sentinel.BackupHarness.$PID"
             $modulePath = Join-Path ([System.IO.Path]::GetTempPath()) "$moduleName.psm1"
+            $testBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'SecureBackups'
+            $escapedBackupRoot = $testBackupRoot.Replace("'", "''")
             $moduleContent = @(
                 'function Write-Log {'
                 "    param([string]`$Message, [string]`$Color = 'White', [string]`$Level = 'INFO')"
@@ -234,7 +236,7 @@ Describe "AI-CLI-Sentinel Tests" {
                 '}'
                 'function Resolve-AbsolutePath {'
                 '    param([string]$Path)'
-                "    return 'C:\SecureBackups'"
+                "    return '$escapedBackupRoot'"
                 '}'
                 'function Test-UnsafeBackupPath {'
                 '    param([string]$Path)'
@@ -261,12 +263,12 @@ Describe "AI-CLI-Sentinel Tests" {
             Set-Content -Path $modulePath -Value $moduleContent -Encoding UTF8
             $module = Import-Module $modulePath -Force -PassThru
             $backupCommand = $module.ExportedFunctions['Invoke-SecretBackup']
-            $result = & $backupCommand -BackupPath 'C:\SecureBackups'
+            $result = & $backupCommand -BackupPath $testBackupRoot
 
             $result | Should -Be $true
             $global:CopiedPaths.Count | Should -Be 3
             ($global:CapturedLogs.Message -join "`n") | Should -Match "No se pudo respaldar '.+\\.ssh'.+error de I/O"
-            ($global:CapturedLogs.Message -join "`n") | Should -Match 'Secretos respaldados en C:\\SecureBackups\\AI_Backup_'
+            ($global:CapturedLogs.Message -join "`n") | Should -Match 'Secretos respaldados en .+AI_Backup_'
         }
     }
 }
