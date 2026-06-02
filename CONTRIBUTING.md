@@ -103,6 +103,11 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    Get-Content src\agents.allowlist.json | ConvertFrom-Json | Out-Null
    ```
 
+   Para pruebas de ejecución elevada, usa una raíz de confianza protegida en
+   `%ProgramData%\AI-CLI-Sentinel\policy\agents.allowlist.json`. El archivo
+   `src\agents.allowlist.json` es un fallback de desarrollo y debe emitir una
+   advertencia si se usa como política operativa.
+
    **Cuándo ejecutar tests en terminal:**
    - Antes de crear o actualizar tu Pull Request.
    - Después de modificar `src/AI-CLI-Sentinel.ps1`.
@@ -118,7 +123,7 @@ Al participar en este proyecto, te comprometes a mantener un ambiente respetuoso
    .\src\AI-CLI-Sentinel.ps1 -Discover
 
    # Flujo real con reporte estructurado
-   .\src\AI-CLI-Sentinel.ps1 -BackupSecrets -ReportPath "C:\Logs\sentinel-report.json"
+   .\src\AI-CLI-Sentinel.ps1 -BackupSecrets -BackupPath "C:\SecureBackups" -ReportPath "C:\Logs\sentinel-report.json"
 
    # Verificar herramientas UV instaladas (ej. aider-chat)
    uv tool list
