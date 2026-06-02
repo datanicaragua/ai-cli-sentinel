@@ -139,7 +139,20 @@ function Resolve-AbsolutePath {
         return $null
     }
 
-    return [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+    $PathToValidate = $Path
+    if ($Path.Length -ge 2 -and $Path[1] -eq ':') {
+        $PathToValidate = $Path.Substring(2)
+    }
+
+    if ($PathToValidate -match '[<>:"|?*]') {
+        return $null
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+    } catch {
+        return $null
+    }
 }
 
 function Test-PathInside {
@@ -250,6 +263,63 @@ function Resolve-ConfigFilePath {
         source = 'repository-fallback'
         warning = "ADVERTENCIA: no se encontró la raíz de confianza protegida en $securePolicyPath. Usando allowlist del repositorio solo como fallback. Migra la política aprobada a ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json con ACL de administradores."
     }
+}
+
+function Invoke-SecretBackup {
+    param([string]$BackupPath)
+
+    if ([string]::IsNullOrWhiteSpace($BackupPath)) {
+        Write-Log 'BackupSecrets requiere -BackupPath. No se permite respaldar secretos en una ruta predeterminada.' -Color Red -Level ERROR
+        return $false
+    }
+
+    $BackupRoot = Resolve-AbsolutePath -Path $BackupPath
+    if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
+        Write-Log "No se pudo resolver la ruta de respaldo: $BackupPath" -Color Red -Level ERROR
+        return $false
+    }
+
+    if (Test-UnsafeBackupPath -Path $BackupPath) {
+        Write-Log "Ruta de respaldo rechazada por posible sincronización en nube o Desktop: $BackupPath" -Color Red -Level ERROR
+        Write-Log 'Elige una ruta local protegida por ACL fuera de Desktop/OneDrive, por ejemplo un volumen cifrado administrado.' -Color Yellow -Level WARN
+        return $false
+    }
+
+    $BackupDir = Join-Path $BackupRoot "AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
+    $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
+    $SuccessfulBackups = 0
+
+    try {
+        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    } catch {
+        Write-Log "No se pudo crear el directorio de respaldo ${BackupDir}: $($_.Exception.Message)" -Color Red -Level ERROR
+        return $false
+    }
+
+    foreach ($p in $Paths) {
+        if (-not (Test-Path $p)) {
+            continue
+        }
+
+        try {
+            Copy-Item $p $BackupDir -Recurse -Force -ErrorAction Stop
+            $SuccessfulBackups++
+        } catch [System.IO.IOException] {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir' por un error de I/O: $($_.Exception.Message)" -Color Yellow -Level WARN
+        } catch [System.UnauthorizedAccessException] {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir' por permisos insuficientes: $($_.Exception.Message)" -Color Yellow -Level WARN
+        } catch {
+            Write-Log "No se pudo respaldar '$p' en '$BackupDir': $($_.Exception.Message)" -Color Yellow -Level WARN
+        }
+    }
+
+    if ($SuccessfulBackups -gt 0) {
+        Write-Log "Secretos respaldados en $BackupDir" -Color Green
+        return $true
+    }
+
+    Write-Log "No se pudo respaldar ningun secreto en $BackupDir." -Color Yellow -Level WARN
+    return $false
 }
 
 function Get-MeaningfulCommandLines {
@@ -839,27 +909,9 @@ if ($PSCmdlet.ShouldProcess('Sistema Operativo', 'Crear Punto de Restauración (
 
 if ($BackupSecrets) {
     if ($PSCmdlet.ShouldProcess('Archivos de Usuario', 'Respaldar Secretos (.ssh, .config)')) {
-        if ([string]::IsNullOrWhiteSpace($BackupPath)) {
-            Write-Log 'BackupSecrets requiere -BackupPath. No se permite respaldar secretos en una ruta predeterminada.' -Color Red -Level ERROR
+        if (-not (Invoke-SecretBackup -BackupPath $BackupPath)) {
             exit 1
         }
-
-        if (Test-UnsafeBackupPath -Path $BackupPath) {
-            Write-Log "Ruta de respaldo rechazada por posible sincronización en nube o Desktop: $BackupPath" -Color Red -Level ERROR
-            Write-Log 'Elige una ruta local protegida por ACL fuera de Desktop/OneDrive, por ejemplo un volumen cifrado administrado.' -Color Yellow -Level WARN
-            exit 1
-        }
-
-        $BackupRoot = Resolve-AbsolutePath -Path $BackupPath
-        $BackupDir = Join-Path $BackupRoot "AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
-        $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
-        New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
-        foreach ($p in $Paths) {
-            if (Test-Path $p) {
-                Copy-Item $p $BackupDir -Recurse -Force -ErrorAction Stop
-            }
-        }
-        Write-Log "Secretos respaldados en $BackupDir" -Color Green
     }
 }
 
