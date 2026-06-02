@@ -64,6 +64,23 @@ cd ai-cli-sentinel
 Get-ChildItem -Recurse
 ```
 
+### 🚀 Primeros Pasos: Inicializar la Raíz de Confianza (Requerido)
+
+Por motivos de seguridad, Sentinel requiere que la lista de agentes permitidos (allowlist) se almacene en una carpeta protegida del sistema. Esto evita que código malicioso de terceros la modifique sin tu permiso explícito.
+
+Abre una consola de PowerShell **como Administrador** y ejecuta:
+
+```powershell
+# 1. Crear el directorio protegido por el sistema
+$PolicyDir = "$env:ProgramData\AI-CLI-Sentinel\policy"
+New-Item -Path $PolicyDir -ItemType Directory -Force
+
+# 2. Migrar la lista de agentes aprobados
+Copy-Item ".\src\agents.allowlist.json" -Destination "$PolicyDir\agents.allowlist.json" -Force
+
+Write-Host "Migración completada. La raíz de confianza está asegurada en: $PolicyDir" -ForegroundColor Green
+```
+
 ### Configuración Inicial
 
 1. **Revisar configuración de fallback del repositorio:**
