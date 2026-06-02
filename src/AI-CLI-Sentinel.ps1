@@ -25,6 +25,9 @@
 .PARAMETER BackupSecrets
     Realiza una copia de seguridad de .ssh y .config antes de operar.
 
+.PARAMETER BackupPath
+    Ruta explicita para respaldos de secretos. Requerida cuando se usa -BackupSecrets.
+
 .PARAMETER ReportPath
     Ruta al archivo JSON estructurado con el resultado de la ejecución.
 
@@ -48,6 +51,7 @@ param (
     [string]$ConfigFile = "$PSScriptRoot\agents.allowlist.json",
     [switch]$Discover,
     [switch]$BackupSecrets,
+    [string]$BackupPath,
     [string]$LogPath = "$HOME\Desktop\AI_Sentinel_Log.txt",
     [string]$CandidatesFile = "$PSScriptRoot\agents.candidates.json",
     [switch]$ApproveCandidates,
@@ -114,6 +118,82 @@ function Test-NpmPackageName {
     }
 
     return ($Name -match '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$')
+}
+
+function Resolve-AbsolutePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    return [System.IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+}
+
+function Test-PathInside {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [string]$Root
+    )
+
+    $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    $normalizedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $normalizedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    return ($normalizedPath.Equals($normalizedRoot, $comparison) -or $normalizedPath.StartsWith("$normalizedRoot\", $comparison))
+}
+
+function Get-CloudSyncRoots {
+    $roots = @()
+    $knownNames = @('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial')
+    foreach ($name in $knownNames) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'User')
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $roots += $value
+        }
+    }
+
+    $userProfile = [Environment]::GetFolderPath('UserProfile')
+    if (-not [string]::IsNullOrWhiteSpace($userProfile)) {
+        $roots += (Join-Path $userProfile 'OneDrive')
+        $roots += (Join-Path $userProfile 'OneDrive - *')
+    }
+
+    return @($roots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+}
+
+function Test-UnsafeBackupPath {
+    param([string]$Path)
+
+    $resolved = Resolve-AbsolutePath -Path $Path
+    if (-not $resolved) {
+        return $true
+    }
+
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not [string]::IsNullOrWhiteSpace($desktop) -and (Test-PathInside -Path $resolved -Root $desktop)) {
+        return $true
+    }
+
+    foreach ($root in (Get-CloudSyncRoots)) {
+        if ($root.Contains('*')) {
+            $parent = Split-Path $root -Parent
+            $leaf = Split-Path $root -Leaf
+            foreach ($match in (Get-ChildItem -Path $parent -Directory -Filter $leaf -ErrorAction SilentlyContinue)) {
+                if (Test-PathInside -Path $resolved -Root $match.FullName) {
+                    return $true
+                }
+            }
+            continue
+        }
+
+        if (Test-PathInside -Path $resolved -Root $root) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Get-MeaningfulCommandLines {
@@ -693,12 +773,24 @@ if ($PSCmdlet.ShouldProcess('Sistema Operativo', 'Crear Punto de Restauración (
 
 if ($BackupSecrets) {
     if ($PSCmdlet.ShouldProcess('Archivos de Usuario', 'Respaldar Secretos (.ssh, .config)')) {
-        $BackupDir = "$HOME\Desktop\AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
+        if ([string]::IsNullOrWhiteSpace($BackupPath)) {
+            Write-Log 'BackupSecrets requiere -BackupPath. No se permite respaldar secretos en una ruta predeterminada.' -Color Red -Level ERROR
+            exit 1
+        }
+
+        if (Test-UnsafeBackupPath -Path $BackupPath) {
+            Write-Log "Ruta de respaldo rechazada por posible sincronización en nube o Desktop: $BackupPath" -Color Red -Level ERROR
+            Write-Log 'Elige una ruta local protegida por ACL fuera de Desktop/OneDrive, por ejemplo un volumen cifrado administrado.' -Color Yellow -Level WARN
+            exit 1
+        }
+
+        $BackupRoot = Resolve-AbsolutePath -Path $BackupPath
+        $BackupDir = Join-Path $BackupRoot "AI_Backup_$(Get-Date -Format 'yyyyMMdd')"
         $Paths = @("$HOME\.config", "$HOME\.ssh", "$HOME\.npmrc")
         New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
         foreach ($p in $Paths) {
             if (Test-Path $p) {
-                Copy-Item $p $BackupDir -Recurse -Force -ErrorAction SilentlyContinue
+                Copy-Item $p $BackupDir -Recurse -Force -ErrorAction Stop
             }
         }
         Write-Log "Secretos respaldados en $BackupDir" -Color Green

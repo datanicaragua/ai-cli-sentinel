@@ -58,6 +58,10 @@ Describe "AI-CLI-Sentinel Tests" {
             $ScriptContent | Should -Match '\[switch\]\$BackupSecrets'
         }
 
+        It "Debe tener parámetro BackupPath para respaldos explícitos" {
+            $ScriptContent | Should -Match '\[string\]\$BackupPath'
+        }
+
         It "Debe tener parámetro ReportPath" {
             $ScriptContent | Should -Match '\[string\]\$ReportPath'
         }
@@ -80,6 +84,15 @@ Describe "AI-CLI-Sentinel Tests" {
         
         It "Debe implementar respaldo de secretos" {
             $ScriptContent | Should -Match "BackupSecrets"
+        }
+
+        It "Debe exigir BackupPath y rechazar rutas Desktop o cloud-sync para secretos" {
+            $ScriptContent | Should -Match 'BackupSecrets requiere -BackupPath'
+            $ScriptContent | Should -Match 'function Test-UnsafeBackupPath'
+            $ScriptContent | Should -Match 'function Get-CloudSyncRoots'
+            $ScriptContent | Should -Match "GetFolderPath\('Desktop'\)"
+            $ScriptContent | Should -Not -Match '\$HOME\\Desktop\\AI_Backup_'
+            $ScriptContent | Should -Match 'Copy-Item .* -ErrorAction Stop'
         }
 
         It "Debe definir helpers de versionado para NPM" {
