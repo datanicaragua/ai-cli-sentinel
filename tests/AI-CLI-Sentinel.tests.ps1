@@ -73,6 +73,16 @@ Describe "AI-CLI-Sentinel Tests" {
         It "Debe tener parámetro ConfigFile" {
             $ScriptContent | Should -Match '\[string\]\$ConfigFile'
         }
+
+        It "Debe resolver la allowlist desde ProgramData antes del fallback del repositorio" {
+            $ScriptContent | Should -Match 'function Get-SecurePolicyPath'
+            $ScriptContent | Should -Match "GetFolderPath\('CommonApplicationData'\)"
+            $ScriptContent | Should -Match 'AI-CLI-Sentinel\\policy\\agents.allowlist.json'
+            $ScriptContent | Should -Match 'function Resolve-ConfigFilePath'
+            $ScriptContent | Should -Match 'repository-fallback'
+            $ScriptContent | Should -Match 'raíz de confianza protegida'
+            $ScriptContent | Should -Not -Match '\[string\]\$ConfigFile = "\$PSScriptRoot\\agents\.allowlist\.json"'
+        }
         
         It "Debe implementar modo Discover" {
             $ScriptContent | Should -Match "MODO DESCUBRIMIENTO"

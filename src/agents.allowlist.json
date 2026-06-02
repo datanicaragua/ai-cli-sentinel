@@ -1,5 +1,5 @@
 {
-  "comment": "Lista blanca oficial de agentes. Solo estos paquetes serán actualizados automáticamente.",
+  "comment": "Lista blanca de fallback del repositorio. En operación, use %ProgramData%\\AI-CLI-Sentinel\\policy\\agents.allowlist.json como raíz de confianza protegida por administradores.",
   "npm": [
     "@anthropic-ai/claude-code",
     "@github/copilot",

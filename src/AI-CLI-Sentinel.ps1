@@ -7,7 +7,9 @@
     Implementa mitigaciones de seguridad como --ignore-scripts y puntos de restauración VSS.
 
 .PARAMETER ConfigFile
-    Ruta al archivo JSON con la lista blanca de agentes.
+    Ruta al archivo JSON con la lista blanca de agentes. Si se omite, se prioriza
+    la política protegida en ProgramData y luego se usa el valor del repositorio
+    solo como fallback.
 
 .PARAMETER Discover
     Modo de auditoría. Busca posibles agentes de IA instalados que NO están en la lista blanca.
@@ -48,7 +50,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact="Medium")]
 param (
-    [string]$ConfigFile = "$PSScriptRoot\agents.allowlist.json",
+    [string]$ConfigFile,
     [switch]$Discover,
     [switch]$BackupSecrets,
     [string]$BackupPath,
@@ -204,6 +206,50 @@ function Test-UnsafeBackupPath {
     }
 
     return $false
+}
+
+function Get-SecurePolicyPath {
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ([string]::IsNullOrWhiteSpace($programData)) {
+        $programData = $env:ProgramData
+    }
+
+    if ([string]::IsNullOrWhiteSpace($programData)) {
+        return $null
+    }
+
+    return (Join-Path $programData 'AI-CLI-Sentinel\policy\agents.allowlist.json')
+}
+
+function Get-RepositoryAllowlistPath {
+    return (Join-Path $PSScriptRoot 'agents.allowlist.json')
+}
+
+function Resolve-ConfigFilePath {
+    param([string]$RequestedConfigFile)
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedConfigFile)) {
+        return [pscustomobject]@{
+            path = $RequestedConfigFile
+            source = 'explicit'
+            warning = $null
+        }
+    }
+
+    $securePolicyPath = Get-SecurePolicyPath
+    if (-not [string]::IsNullOrWhiteSpace($securePolicyPath) -and (Test-Path $securePolicyPath)) {
+        return [pscustomobject]@{
+            path = $securePolicyPath
+            source = 'secure-policy'
+            warning = $null
+        }
+    }
+
+    return [pscustomobject]@{
+        path = Get-RepositoryAllowlistPath
+        source = 'repository-fallback'
+        warning = "ADVERTENCIA: no se encontró la raíz de confianza protegida en $securePolicyPath. Usando allowlist del repositorio solo como fallback. Migra la política aprobada a ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json con ACL de administradores."
+    }
 }
 
 function Get-MeaningfulCommandLines {
@@ -626,6 +672,16 @@ Write-Log "INICIANDO AI CLI SENTINEL v3.1 (Patch)" -Color Cyan
 if (-not (Test-Admin)) {
     Write-Error "Se requieren privilegios de Administrador para la gestión de VSS y actualizaciones globales."
     exit
+}
+
+$ConfigResolution = Resolve-ConfigFilePath -RequestedConfigFile $ConfigFile
+$ConfigFile = $ConfigResolution.path
+if ($ConfigResolution.source -eq 'secure-policy') {
+    Write-Log "Usando raíz de confianza protegida: $ConfigFile" -Color Green
+} elseif ($ConfigResolution.source -eq 'repository-fallback') {
+    Write-Log $ConfigResolution.warning -Color Yellow -Level WARN
+} else {
+    Write-Log "Usando ConfigFile explícito: $ConfigFile" -Color Yellow -Level WARN
 }
 
 $Config = @{ npm = @(); winget = @(); uv = @() }
