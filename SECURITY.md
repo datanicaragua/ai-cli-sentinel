@@ -50,6 +50,23 @@ Actualmente no ofrecemos un programa de recompensas por errores, pero agradecemo
 4. **Principio de menor privilegio**: Ejecuta el script con permisos mínimos necesarios
 5. **Backups**: Mantén backups regulares de tu configuración
 
+### Política de Raíz de Confianza
+
+El archivo de allowlist es una raíz de confianza para actualizaciones elevadas.
+Para ejecuciones operativas, la política aprobada debe residir en una ruta
+controlada por administradores, como:
+
+```powershell
+$env:ProgramData\AI-CLI-Sentinel\policy\agents.allowlist.json
+```
+
+El archivo `src/agents.allowlist.json` del repositorio se mantiene como valor
+predeterminado de desarrollo y arranque inicial. Los operadores deben migrar la
+política aprobada a la ruta protegida antes de usar el script en estaciones de
+trabajo reales, para evitar que un repositorio o directorio escribible por el
+usuario se convierta en la raíz de confianza consumida durante una ejecución
+elevada.
+
 ### Para Desarrolladores
 
 1. **Validación de entrada**: Siempre valida y sanitiza la entrada del usuario
@@ -61,6 +78,11 @@ Actualmente no ofrecemos un programa de recompensas por errores, pero agradecemo
 ## Historial de Seguridad
 
 Las vulnerabilidades corregidas se documentarán aquí después de que se haya publicado un parche.
+
+- **2026-06-02**: Se completó una reevaluación ofensiva de seguridad enfocada
+  en cadena de suministro para flujos npm, winget, uv/PyPI, respaldo de
+  secretos y raíces de confianza locales. El reporte completo está preservado
+  en [`docs/security/offensive_reassessment_20260602.md`](docs/security/offensive_reassessment_20260602.md).
 
 ## Contacto
 
